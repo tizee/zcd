@@ -48,10 +48,10 @@ zcd --daemon
 
 ## Roadmap
 
-- [ x ] list entries
-- [ x ] insert entries
+- [x] list entries
+- [x] insert entries
 - [ ] zsh shell script wrapper
   - [ ] zsh
 - [ ] use better algorithm
-- [ x ] cli mode
+- [x] cli mode
 - [ ] server mode
