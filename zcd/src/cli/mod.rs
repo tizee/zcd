@@ -35,7 +35,7 @@ pub enum Commands {
     Delete { entry: String },
     /// query an entry based on keyword
     #[clap(arg_required_else_help = true)]
-    Query { pattern: String },
+    Query(QueryArgs),
     /// list all entries
     #[clap(arg_required_else_help = false)]
     List,
@@ -53,7 +53,15 @@ pub enum Commands {
     Config(ConfigArgs),
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
+pub struct QueryArgs {
+    entry: String,
+    /// show rank
+    #[clap(short, long)]
+    rank: bool,
+}
+
+#[derive(Debug, Args)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct ShellTypes {
     #[clap(long, arg_enum)]
@@ -66,7 +74,7 @@ enum ShellEnum {
     Bash,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct ImportExportArgs {
     path: String,
@@ -80,20 +88,20 @@ enum DataFileFormat {
     Zcd,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 pub struct ServerArgs {
     #[clap(subcommand)]
     command: ServerOps,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 struct DbConfigArgs {
     /// use a specified zcd config file
     #[clap(long, short)]
     path: Option<String>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct ConfigArgs {
     /// generate default config file
@@ -101,7 +109,7 @@ pub struct ConfigArgs {
     generate: bool,
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Subcommand)]
 enum ServerOps {
     /// run server
     #[clap(arg_required_else_help = true)]
@@ -137,20 +145,22 @@ impl AppExt for Cli {
             }
             Commands::Insert { entry } => {
                 let mut client = Client::new().context("failed to create client")?;
-                client.insert(entry);
-                println!("insert {}", entry);
+                client.insert(entry)?;
             }
             Commands::Delete { entry } => {
                 let mut client = Client::new().context("failed to create client")?;
-                client.delete(entry);
-                println!("delete {}", entry);
+                client.delete(entry)?;
             }
-            Commands::Query { pattern } => {
+            Commands::Query(args) => {
                 let client = Client::new().context("failed to create client")?;
-                if let Some(dir) = client.query(pattern) {
-                    println!("{}", dir);
+                if let Some(dir) = client.query(&args.entry) {
+                    if args.rank {
+                        println!("{}", dir);
+                    } else {
+                        println!("{}", dir.path);
+                    }
                 } else {
-                    println!("entry not found for {}", pattern);
+                    println!("entry not found for {}", args.entry);
                 }
             }
             Commands::Import(import_args) => {

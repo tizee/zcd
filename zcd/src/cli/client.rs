@@ -21,19 +21,23 @@ impl Client<'_> {
             })
         }
     }
-    pub fn insert(&mut self, s: &str) {
+    pub fn insert(&mut self, s: &str) -> Result<()> {
         if self.db.is_some() {
             let database = self.db.as_mut().unwrap();
             database.insert_or_update(s.into());
+            database.save()
         } else {
+            Ok(())
         }
     }
 
-    pub fn delete(&mut self, s: &str) {
+    pub fn delete(&mut self, s: &str) -> Result<()> {
         if self.db.is_some() {
             let database = self.db.as_mut().unwrap();
             database.delete(s);
+            database.save()
         } else {
+            Ok(())
         }
     }
 
