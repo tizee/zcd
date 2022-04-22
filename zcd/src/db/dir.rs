@@ -9,10 +9,12 @@ use std::time::SystemTime;
 
 use itertools::Itertools;
 
+use serde::{Deserialize, Serialize};
+
 pub type Ranking = f64;
 pub type Epoch = u64;
 
-#[derive(Debug, Clone, PartialOrd)]
+#[derive(Debug, Clone, PartialOrd, Serialize, Deserialize)]
 pub struct Dir<'a> {
     pub path: Cow<'a, str>,
     pub rank: Ranking,

@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use data::{expand_path, open_file, write_file, DataFile, DataFileIO, ZDataFile, ZcdDataFile};
-use dir::{Dir, DirList, OpsDelegate};
+pub use dir::{Dir, DirList, OpsDelegate};
 
 use crate::config::{self, config_file, load_config_from_path, load_default_config, ConfigFile};
 
