@@ -46,7 +46,7 @@ impl Display for Dir<'_> {
         if rank > 9999.0 {
             rank = 9999.0;
         }
-        write!(f, "{} {}", rank, path)
+        write!(f, "{:.2} {}", rank, path)
     }
 }
 
@@ -189,6 +189,16 @@ mod test_dir {
     use super::*;
 
     #[test]
+    fn test_dir_fmt() {
+        let foo = Dir {
+            path: Cow::Owned("/usr/local/bin".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        assert_eq!(foo.to_string(), "1.00 /usr/local/bin");
+    }
+
+    #[test]
     fn test_dir_list() {
         let foo = Dir {
             path: Cow::Owned("/usr/local/bin".into()),
@@ -210,6 +220,6 @@ mod test_dir {
         dir_list.insert(foo.path.to_string(), foo);
         dir_list.insert(foo1.path.to_string(), foo1);
         dir_list.insert(foo2.path.to_string(), foo2);
-        assert_eq!(dir_list.len(), 2);
+        assert_eq!(dir_list.len(), 1);
     }
 }
