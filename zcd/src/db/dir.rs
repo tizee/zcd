@@ -7,6 +7,8 @@ use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::time::SystemTime;
 
+use fuzzy::Matcher;
+
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
@@ -133,12 +135,15 @@ impl<'a> OpsDelegate for DirList<'a> {
         let pattern = pattern.as_ref();
         let mut candidates = Vec::new();
         for (path, dir) in self.iter() {
-            if path.contains(pattern) {
-                candidates.push(dir.clone());
+            if Matcher::has_match(pattern, path) {
+                let fzy = Matcher::Fzy;
+                candidates.push((fzy.match_score(pattern, path), dir.clone()));
             }
         }
         let list_desc_order = candidates
             .into_iter()
+            .sorted_by(|a, b| ((&b.0 * 10000.0) as u64).cmp(&((&a.0 * 1000.0) as u64)))
+            .filter_map(|a| if a.0 > 0.0 { Some(a.1) } else { None })
             .sorted_by(|a, b| Ord::cmp(&b, &a))
             .collect();
         Some(list_desc_order)
@@ -186,6 +191,7 @@ fn frecent(now: Epoch, dir: &Dir) -> Ranking {
 
 #[cfg(test)]
 mod test_dir {
+    use super::OpsDelegate;
     use super::*;
 
     #[test]
@@ -221,5 +227,40 @@ mod test_dir {
         dir_list.insert(foo1.path.to_string(), foo1);
         dir_list.insert(foo2.path.to_string(), foo2);
         assert_eq!(dir_list.len(), 1);
+    }
+
+    #[test]
+    fn test_query() {
+        let foo = Dir {
+            path: Cow::Owned("/projects/foo/bar".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        let foo1 = Dir {
+            path: Cow::Owned("/projects/bar/foo".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        let foo2 = Dir {
+            path: Cow::Owned("/.config/zcd".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        let foo3 = Dir {
+            path: Cow::Owned("/projects/rust/zcd".into()),
+            rank: 4.0,
+            last_accessed: now(),
+        };
+        let mut dir_list = DirList::new();
+        dir_list.insert(foo.path.to_string(), foo);
+        dir_list.insert(foo1.path.to_string(), foo1);
+        dir_list.insert(foo2.path.to_string(), foo2);
+        dir_list.insert(foo3.path.to_string(), foo3);
+        let res = dir_list.query("foo");
+        assert!(res.is_some());
+        let res = dir_list.query("bar");
+        assert!(res.is_some());
+        let res = dir_list.query("zcd");
+        assert!(res.is_some());
     }
 }
