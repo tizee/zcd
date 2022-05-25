@@ -5,12 +5,12 @@ z implementation in Rust.
 ## Features
 
 - z-like navigator
-- interactive fuzzy finder
+- longest substring matching algorithm for keyword
 
 ## zsh
 
 ```zsh
-zcd install zsh # echo 'source ~/.config/zcd/zcd.plugin.zsh >> ~/.zshrc'
+zcd install zsh
 ```
 
 This will create script file `zcd.plugin.zsh` in your `$HOME/.config/zcd`.
@@ -18,22 +18,26 @@ This will create script file `zcd.plugin.zsh` in your `$HOME/.config/zcd`.
 ## Usage
 
 ```
-zcd -l/--list # list of entries
-zcd -a/--add <entry> # add a path into db
-zcd -d/--delete <entry> # remove a path from db
-zcd -i/--interactive # manage db
-zcd --daemon # run as daemon process to query in memory, by default it would write data into disk when needed
-zcd --init <shell> # create cli script for given shell
-```
+zcd
 
-```
-z <path>
-```
+USAGE:
+    zcd [OPTIONS] <SUBCOMMAND>
 
-## Advanced usage
+OPTIONS:
+    -h, --help       Print help information
+    -v, --verbose
 
-```
-z -gi repo
+SUBCOMMANDS:
+    config    config management
+    delete    delete an entry
+    export    Export data into datafile
+    help      Print this message or the help of the given subcommand(s)
+    import    Import data from datafile
+    init      install shell script
+    insert    insert or update an entry
+    list      list all entries
+    query     query an entry based on keyword
+    server    Server management
 ```
 
 ### Run as daemon in background
@@ -44,10 +48,10 @@ zcd --daemon
 
 ## Roadmap
 
-- [ ] list entries
-- [ ] insert entries
-- [ ] configure priorities
-- [ ] std output
-- [ ] use fuzzy search algorithm
-- [ ] cli mode
-- [ ] daemon mode
+- [x] list entries
+- [x] insert entries
+- [ ] zsh shell script wrapper
+  - [ ] zsh
+- [ ] use better algorithm
+- [x] cli mode
+- [ ] server mode

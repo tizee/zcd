@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -19,7 +20,7 @@ pub enum DataFile {
     Z(ZDataFile),
 }
 
-fn expand_path<P: AsRef<Path>>(p: P) -> Option<PathBuf> {
+pub fn expand_path<P: AsRef<Path>>(p: P) -> Option<PathBuf> {
     let path = p.as_ref();
     if !path.starts_with("~") {
         return Some(path.to_path_buf());
@@ -45,13 +46,22 @@ pub fn open_file<P: AsRef<Path>>(p: P) -> Result<File> {
     Ok(file)
 }
 
+pub fn write_file<P: AsRef<Path>, C: AsRef<[u8]>>(p: P, c: C) -> Result<()> {
+    // resolve symlink
+    let path = expand_path(p.as_ref()).unwrap();
+    let contents = c.as_ref();
+    fs::write(path.as_path(), contents)
+        .context(anyhow!("failed to write into {}", path.display()))?;
+    Ok(())
+}
+
 impl DataFileIO for ZcdDataFile {
     fn to_bytes(&self, data: &DirList) -> Result<Vec<u8>> {
         let mut buffer: Vec<u8> = Vec::new();
-        for (path, dir) in data.iter().sorted_by_key(|x| -(x.1.rank as i64)) {
+        for (path, dir) in data.iter().sorted_by(|a, b| Ord::cmp(&b, &a)) {
             let line: Vec<String> = vec![
                 path.to_string(),
-                dir.rank.round().to_string(),
+                format!("{:.1}", dir.rank),
                 dir.last_accessed.to_string(),
             ];
             let mut line = line.into_iter().join("|");
@@ -106,10 +116,10 @@ impl DataFileIO for ZcdDataFile {
 impl DataFileIO for ZDataFile {
     fn to_bytes(&self, data: &DirList) -> Result<Vec<u8>> {
         let mut buffer: Vec<u8> = Vec::new();
-        for (path, dir) in data.iter().sorted_by_key(|x| -(x.1.rank as i64)) {
+        for (path, dir) in data.iter().sorted_by(|a, b| Ord::cmp(&b, &a)) {
             let line: Vec<String> = vec![
                 path.to_string(),
-                dir.rank.round().to_string(),
+                format!("{:.1}", dir.rank),
                 dir.last_accessed.to_string(),
             ];
             let mut line = line.into_iter().join("|");

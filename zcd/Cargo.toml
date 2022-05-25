@@ -8,6 +8,15 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.56"
-clap = {version="3.1.9", features= [ "std","derive","color" ]}
+bincode = "1.3.3"
+clap = { version="3.1.9", features= [ "std","derive","color" ] }
+crossbeam-utils = "0.8.8"
+daemonize = "0.4.1"
 dirs = "4.0.0"
 itertools = "0.10.3"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+fuzzy = {path = "../fuzzy"}
+
+[profile.release]
+debug= 1

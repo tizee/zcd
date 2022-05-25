@@ -1,17 +1,22 @@
 use std::borrow::Cow;
 use std::cmp::{Ord, Ordering, PartialEq, PartialOrd};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::time::SystemTime;
 
+use fuzzy::Matcher;
+
 use itertools::Itertools;
+
+use serde::{Deserialize, Serialize};
 
 pub type Ranking = f64;
 pub type Epoch = u64;
 
-#[derive(Debug, Clone, PartialOrd)]
+#[derive(Debug, Clone, PartialOrd, Serialize, Deserialize)]
 pub struct Dir<'a> {
     pub path: Cow<'a, str>,
     pub rank: Ranking,
@@ -22,7 +27,11 @@ impl Ord for Dir<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         let rank_self = self.rank.round() as u64;
         let rank_other = other.rank.round() as u64;
-        rank_self.cmp(&rank_other)
+        let order = rank_self.cmp(&rank_other);
+        if order == Ordering::Equal {
+            return self.last_accessed.cmp(&other.last_accessed);
+        }
+        order
     }
 }
 
@@ -39,7 +48,7 @@ impl Display for Dir<'_> {
         if rank > 9999.0 {
             rank = 9999.0;
         }
-        write!(f, "{} {}", rank, path)
+        write!(f, "{:.2} {}", rank, path)
     }
 }
 
@@ -74,7 +83,7 @@ impl<'a> DerefMut for DirList<'a> {
 }
 
 pub trait OpsDelegate {
-    fn update_frecent(&mut self) -> &mut Self;
+    fn update_frecent(&mut self);
     fn insert_or_update(&mut self, p: Cow<str>);
     fn delete<P: AsRef<str>>(&mut self, p: P);
     fn query<S: AsRef<str>>(&self, pattern: S) -> Option<Vec<Dir>>;
@@ -91,32 +100,29 @@ fn now() -> u64 {
 
 impl<'a> OpsDelegate for DirList<'a> {
     /// it's an expensive operation
-    fn update_frecent(&mut self) -> &mut Self {
+    fn update_frecent(&mut self) {
         let now = now();
         for (_, dir) in self.iter_mut() {
             let rank = frecent(now, dir);
             dir.rank = rank;
         }
-        self
     }
 
     fn insert_or_update(&mut self, p: Cow<'_, str>) {
-        let path = p;
-        let key = path.clone().to_string();
+        let key = p.to_string();
         let now = now();
-        if self.contains_key(&key) {
+        if let Entry::Vacant(e) = self.entry(key.clone()) {
+            e.insert(Dir {
+                path: Cow::Owned(p.into()),
+                rank: 1.0,
+                last_accessed: now,
+            });
+        } else {
             let mut dir = self.get_mut(&key).unwrap();
             let rank = frecent(now, dir);
             dir.rank = rank;
+            dir.last_accessed = now;
         }
-        self.insert(
-            key,
-            Dir {
-                path: Cow::Owned(path.into()),
-                rank: 1.0,
-                last_accessed: now,
-            },
-        );
     }
 
     fn delete<P: AsRef<str>>(&mut self, path: P) {
@@ -129,12 +135,15 @@ impl<'a> OpsDelegate for DirList<'a> {
         let pattern = pattern.as_ref();
         let mut candidates = Vec::new();
         for (path, dir) in self.iter() {
-            if path.contains(pattern) {
-                candidates.push(dir.clone());
+            if Matcher::has_match(pattern, path) {
+                let fzy = Matcher::Fzy;
+                candidates.push((fzy.match_score(pattern, path), dir.clone()));
             }
         }
         let list_desc_order = candidates
             .into_iter()
+            .sorted_by(|a, b| ((&b.0 * 10000.0) as u64).cmp(&((&a.0 * 1000.0) as u64)))
+            .filter_map(|a| if a.0 > 0.0 { Some(a.1) } else { None })
             .sorted_by(|a, b| Ord::cmp(&b, &a))
             .collect();
         Some(list_desc_order)
@@ -156,7 +165,7 @@ impl<'a> OpsDelegate for DirList<'a> {
 // ranking algorithm: prefer higher rank
 fn frecent(now: Epoch, dir: &Dir) -> Ranking {
     let dx = now - dir.last_accessed;
-    let rank;
+    let mut rank;
     const HOUR: u64 = 60 * 60;
     const DAY: u64 = 24 * HOUR;
     const WEEK: u64 = 7 * DAY;
@@ -172,12 +181,28 @@ fn frecent(now: Epoch, dir: &Dir) -> Ranking {
     } else {
         rank = dir.rank * 0.25;
     }
+    if rank > 9999.0 {
+        rank = 9999.0
+    } else if rank < 1.0 {
+        rank = 1.0
+    }
     rank
 }
 
 #[cfg(test)]
 mod test_dir {
+    use super::OpsDelegate;
     use super::*;
+
+    #[test]
+    fn test_dir_fmt() {
+        let foo = Dir {
+            path: Cow::Owned("/usr/local/bin".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        assert_eq!(foo.to_string(), "1.00 /usr/local/bin");
+    }
 
     #[test]
     fn test_dir_list() {
@@ -201,6 +226,41 @@ mod test_dir {
         dir_list.insert(foo.path.to_string(), foo);
         dir_list.insert(foo1.path.to_string(), foo1);
         dir_list.insert(foo2.path.to_string(), foo2);
-        assert_eq!(dir_list.len(), 2);
+        assert_eq!(dir_list.len(), 1);
+    }
+
+    #[test]
+    fn test_query() {
+        let foo = Dir {
+            path: Cow::Owned("/projects/foo/bar".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        let foo1 = Dir {
+            path: Cow::Owned("/projects/bar/foo".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        let foo2 = Dir {
+            path: Cow::Owned("/.config/zcd".into()),
+            rank: 1.0,
+            last_accessed: now(),
+        };
+        let foo3 = Dir {
+            path: Cow::Owned("/projects/rust/zcd".into()),
+            rank: 4.0,
+            last_accessed: now(),
+        };
+        let mut dir_list = DirList::new();
+        dir_list.insert(foo.path.to_string(), foo);
+        dir_list.insert(foo1.path.to_string(), foo1);
+        dir_list.insert(foo2.path.to_string(), foo2);
+        dir_list.insert(foo3.path.to_string(), foo3);
+        let res = dir_list.query("foo");
+        assert!(res.is_some());
+        let res = dir_list.query("bar");
+        assert!(res.is_some());
+        let res = dir_list.query("zcd");
+        assert!(res.is_some());
     }
 }

@@ -1,3 +1,9 @@
+mod fzy;
+mod matcher;
+mod score;
+
+pub use matcher::Matcher;
+
 #[cfg(test)]
 mod tests {
     #[test]

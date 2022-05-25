@@ -2,8 +2,10 @@ mod client;
 
 use anyhow::{Context, Result};
 use client::Client;
+use std::path::{Path, PathBuf};
 
-use crate::config::generate_config_file;
+use crate::config::{config_file, generate_config_file};
+use crate::server::{check_server_alive, DbServer};
 
 use clap::{ArgEnum, Args, Parser, Subcommand};
 /// Zcd runs in two modes: cli and server.
@@ -35,7 +37,7 @@ pub enum Commands {
     Delete { entry: String },
     /// query an entry based on keyword
     #[clap(arg_required_else_help = true)]
-    Query { pattern: String },
+    Query(QueryArgs),
     /// list all entries
     #[clap(arg_required_else_help = false)]
     List,
@@ -53,7 +55,15 @@ pub enum Commands {
     Config(ConfigArgs),
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
+pub struct QueryArgs {
+    entry: String,
+    /// show rank
+    #[clap(short, long)]
+    rank: bool,
+}
+
+#[derive(Debug, Args)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct ShellTypes {
     #[clap(long, arg_enum)]
@@ -66,7 +76,7 @@ enum ShellEnum {
     Bash,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct ImportExportArgs {
     path: String,
@@ -80,20 +90,23 @@ enum DataFileFormat {
     Zcd,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 pub struct ServerArgs {
     #[clap(subcommand)]
-    command: ServerOps,
+    command: ServerCmds,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 struct DbConfigArgs {
     /// use a specified zcd config file
     #[clap(long, short)]
     path: Option<String>,
+    /// run as daemon
+    #[clap(long, short)]
+    daemon: bool,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Args)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct ConfigArgs {
     /// generate default config file
@@ -101,19 +114,15 @@ pub struct ConfigArgs {
     generate: bool,
 }
 
-#[derive(Debug, Clone, Subcommand)]
-enum ServerOps {
+#[derive(Debug, Subcommand)]
+enum ServerCmds {
     /// run server
-    #[clap(arg_required_else_help = true)]
     Run(DbConfigArgs),
     /// stop server
-    #[clap(arg_required_else_help = true)]
     Stop,
     /// restart server
-    #[clap(arg_required_else_help = true)]
     Restart(DbConfigArgs),
     /// check server status
-    #[clap(arg_required_else_help = true)]
     Status,
 }
 
@@ -137,20 +146,22 @@ impl AppExt for Cli {
             }
             Commands::Insert { entry } => {
                 let mut client = Client::new().context("failed to create client")?;
-                client.insert(entry);
-                println!("insert {}", entry);
+                client.insert(entry)?;
             }
             Commands::Delete { entry } => {
                 let mut client = Client::new().context("failed to create client")?;
-                client.delete(entry);
-                println!("delete {}", entry);
+                client.delete(entry)?;
             }
-            Commands::Query { pattern } => {
+            Commands::Query(args) => {
                 let client = Client::new().context("failed to create client")?;
-                if let Some(dir) = client.query(pattern) {
-                    println!("{}", dir);
+                if let Ok(Some(dir)) = client.query(&args.entry) {
+                    if args.rank {
+                        println!("{}", dir);
+                    } else {
+                        println!("{}", dir.path);
+                    }
                 } else {
-                    println!("entry not found for {}", pattern);
+                    println!("entry not found for {}", args.entry);
                 }
             }
             Commands::Import(import_args) => {
@@ -178,33 +189,52 @@ impl AppExt for Cli {
             Commands::List => {
                 println!("list entires");
                 let client = Client::new().context("failed to create client")?;
-                let list = client.list().context("failed to get list")?;
-                for dir in list.into_iter() {
-                    println!("{}", dir);
+                let res = client.list().context("failed to get list")?;
+                if let Some(list) = res {
+                    for dir in list.into_iter() {
+                        println!("{}", dir);
+                    }
                 }
             }
             Commands::Server(server) => {
                 let server_cmd = &server.command;
                 match server_cmd {
-                    ServerOps::Run(config_path) => {
+                    ServerCmds::Run(run_args) => {
+                        let config_path = if run_args.path.is_some() {
+                            PathBuf::from(run_args.path.as_ref().unwrap())
+                        } else {
+                            config_file().unwrap()
+                        };
+                        println!("Run server with {}", config_path.display());
+                        let server = DbServer::new(true, Path::new(config_path.as_path()))
+                            .context("failed to init db server")?;
+                        if run_args.daemon {
+                            server.start_daemonized().context("failed to daemonize")?;
+                        } else {
+                            server.run().context("failed to run")?;
+                        }
+                    }
+                    ServerCmds::Stop => {
+                        if check_server_alive() {
+                            println!("Stop server");
+                        } else {
+                            println!("Server isn't running");
+                        }
+                    }
+                    ServerCmds::Restart(config_path) => {
                         if config_path.path.is_some() {
                             println!("Run server with {}", config_path.path.as_ref().unwrap());
                         } else {
                             println!("Run server");
                         }
                     }
-                    ServerOps::Stop => {
-                        println!("Stop server");
-                    }
-                    ServerOps::Restart(config_path) => {
-                        if config_path.path.is_some() {
-                            println!("Run server with {}", config_path.path.as_ref().unwrap());
+                    ServerCmds::Status => {
+                        if check_server_alive() {
+                            // TODO
+                            println!("Server is running for...");
                         } else {
-                            println!("Run server");
+                            println!("Server isn't running");
                         }
-                    }
-                    ServerOps::Status => {
-                        println!("Server Status");
                     }
                 }
             }

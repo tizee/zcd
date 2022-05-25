@@ -40,6 +40,7 @@ function __zcd_z() {
   else
     # sorting candidates
     local __zcd_result="$(zcd query -- "$@")" && __zcd_cd "$__zcd_result"
+    return 0
   fi
 }
 
