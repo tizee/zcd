@@ -45,10 +45,7 @@ impl Display for Dir<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut rank = self.rank;
         let path = self.path.to_string();
-        if rank > 9999.0 {
-            rank = 9999.0;
-        }
-        write!(f, "{:.2} {}", rank, path)
+        write!(f, "{}", path)
     }
 }
 
@@ -91,6 +88,7 @@ pub trait OpsDelegate {
     fn list(&self) -> Option<Vec<Dir>>;
 }
 
+#[inline]
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -99,11 +97,11 @@ fn now() -> u64 {
 }
 
 impl<'a> OpsDelegate for DirList<'a> {
-    /// it's an expensive operation
+    // update all entries' ranks using current time
     fn update_frecent(&mut self) {
         let now = now();
         for (_, dir) in self.iter_mut() {
-            let rank = frecent(now, dir);
+            let rank = frecent(now, dir.last_accessed, dir.rank);
             dir.rank = rank;
         }
     }
@@ -130,7 +128,7 @@ impl<'a> OpsDelegate for DirList<'a> {
         self.remove(&path.to_string());
     }
 
-    /// O(N*M)
+    // query with builtin fuzzy-matcher algorithm
     fn query<S: AsRef<str>>(&self, pattern: S) -> Option<Vec<Dir>> {
         let pattern = pattern.as_ref();
         let mut candidates = Vec::new();
@@ -142,7 +140,8 @@ impl<'a> OpsDelegate for DirList<'a> {
         }
         let list_desc_order = candidates
             .into_iter()
-            .sorted_by(|a, b| ((&b.0 * 10000.0) as u64).cmp(&((&a.0 * 1000.0) as u64)))
+            // multiply by 1000 is enough for handling small float numbers
+            .sorted_by(|a, b| ((&b.0 * 1000.0) as u64).cmp(&((&a.0 * 1000.0) as u64)))
             .filter_map(|a| if a.0 > 0.0 { Some(a.1) } else { None })
             .sorted_by(|a, b| Ord::cmp(&b, &a))
             .collect();
@@ -163,28 +162,28 @@ impl<'a> OpsDelegate for DirList<'a> {
 }
 
 // ranking algorithm: prefer higher rank
-fn frecent(now: Epoch, dir: &Dir) -> Ranking {
-    let dx = now - dir.last_accessed;
-    let mut rank;
-    const HOUR: u64 = 60 * 60;
-    const DAY: u64 = 24 * HOUR;
-    const WEEK: u64 = 7 * DAY;
+fn frecent(now: Epoch, last_accessed: Epoch, last_rank: f64) -> Ranking {
+    static HOUR: u64 = 60 * 60;
+    static DAY: u64 = 24 * HOUR;
+    static WEEK: u64 = 7 * DAY;
+    let dx = now - last_accessed;
+    let mut rank: f64;
     // in 1 hour
     if dx < HOUR {
-        rank = dir.rank * 4.0;
+        if last_rank > 9999.0 {
+            // f(x) = ln(x) + x
+            rank = last_rank + last_rank.log2();
+        } else {
+            rank = last_rank * 4.0;
+        }
     } else if dx < DAY {
         // in 24 hour
-        rank = dir.rank * 2.0;
+        rank = last_rank * 2.0;
     } else if dx < WEEK {
         // in 7 days
-        rank = dir.rank * 0.5;
+        rank = last_rank * 0.5;
     } else {
-        rank = dir.rank * 0.25;
-    }
-    if rank > 9999.0 {
-        rank = 9999.0
-    } else if rank < 1.0 {
-        rank = 1.0
+        rank = last_rank * 0.25;
     }
     rank
 }

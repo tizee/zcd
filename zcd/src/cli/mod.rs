@@ -40,7 +40,7 @@ pub enum Commands {
     Query(QueryArgs),
     /// list all entries
     #[clap(arg_required_else_help = false)]
-    List,
+    List(ListArgs),
     /// Import data from datafile
     #[clap(arg_required_else_help = true)]
     Import(ImportExportArgs),
@@ -53,6 +53,13 @@ pub enum Commands {
     /// config management
     #[clap(arg_required_else_help = true)]
     Config(ConfigArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ListArgs{
+    /// show rank
+    #[clap(short, long)]
+    rank: bool,
 }
 
 #[derive(Debug, Args)]
@@ -186,13 +193,16 @@ impl AppExt for Cli {
                     }
                 }
             }
-            Commands::List => {
-                println!("list entires");
+            Commands::List(list_args) => {
                 let client = Client::new().context("failed to create client")?;
                 let res = client.list().context("failed to get list")?;
                 if let Some(list) = res {
                     for dir in list.into_iter() {
-                        println!("{}", dir);
+                        if !list_args.rank {
+                            println!("{}", dir);
+                        }else{
+                            println!("{} {}", dir.rank, dir);
+                        }
                     }
                 }
             }
@@ -205,7 +215,6 @@ impl AppExt for Cli {
                         } else {
                             config_file().unwrap()
                         };
-                        println!("Run server with {}", config_path.display());
                         let server = DbServer::new(true, Path::new(config_path.as_path()))
                             .context("failed to init db server")?;
                         if run_args.daemon {
