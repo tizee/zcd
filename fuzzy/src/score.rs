@@ -10,16 +10,16 @@ pub enum FzyMatchType {
     Dot,
 }
 
-pub static FZY_SCORE_GAP_LEADING: f64 = -0.005;
-pub static FZY_SCORE_GAP_TRAILING: f64 = -0.005;
-pub static FZY_SCORE_GAP_INNER: f64 = -0.01;
-pub static FZY_SCORE_MATCH_CONSECUTIVE: f64 = 1.0;
-pub static FZY_SCORE_MATCH_SLASH: f64 = 0.9;
-pub static FZY_SCORE_MATCH_WORD: f64 = 0.8;
-pub static FZY_SCORE_MATCH_CAPITAL: f64 = 0.7;
-pub static FZY_SCORE_MATCH_DOT: f64 = 0.6;
-pub static SCORE_MIN: f64 = f64::MIN;
-pub static SCORE_MAX: f64 = f64::MAX;
+pub const FZY_SCORE_GAP_LEADING: f64 = -0.005;
+pub const FZY_SCORE_GAP_TRAILING: f64 = -0.005;
+pub const FZY_SCORE_GAP_INNER: f64 = -0.01;
+pub const FZY_SCORE_MATCH_CONSECUTIVE: f64 = 1.0;
+pub const FZY_SCORE_MATCH_SLASH: f64 = 0.9;
+pub const FZY_SCORE_MATCH_WORD: f64 = 0.8;
+pub const FZY_SCORE_MATCH_CAPITAL: f64 = 0.7;
+pub const FZY_SCORE_MATCH_DOT: f64 = 0.6;
+pub const SCORE_MIN: f64 = f64::MIN;
+pub const SCORE_MAX: f64 = f64::MAX;
 
 #[derive(Debug, Clone)]
 pub enum FzyCharType {
