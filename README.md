@@ -4,16 +4,9 @@ z implementation in Rust.
 
 ## Features
 
-- z-like navigator
+- z-like behavior with script
 - longest substring matching algorithm for keyword
-
-## zsh
-
-```zsh
-zcd install zsh
-```
-
-This will create script file `zcd.plugin.zsh` in your `$HOME/.config/zcd`.
+- z compatible data format
 
 ## Usage
 
@@ -55,4 +48,4 @@ zcd --daemon
 - [x] use better algorithm
   - [x] fzy
 - [x] cli mode
-- [ ] server mode
+- [x] server mode

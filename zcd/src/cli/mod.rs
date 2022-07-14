@@ -27,8 +27,6 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// install shell script
-    Init(ShellTypes),
     /// insert or update an entry
     #[clap(arg_required_else_help = true)]
     Insert { entry: String },
@@ -140,17 +138,6 @@ pub trait AppExt {
 impl AppExt for Cli {
     fn run(&self) -> Result<()> {
         match &self.command {
-            Commands::Init(shell) => {
-                let shell_type = &shell.shell;
-                match shell_type {
-                    ShellEnum::Zsh => {
-                        println!("install script for zsh");
-                    }
-                    ShellEnum::Bash => {
-                        println!("install script for bash");
-                    }
-                }
-            }
             Commands::Insert { entry } => {
                 let mut client = Client::new().context("failed to create client")?;
                 client.insert(entry)?;
@@ -163,9 +150,9 @@ impl AppExt for Cli {
                 let client = Client::new().context("failed to create client")?;
                 if let Ok(Some(dir)) = client.query(&args.entry) {
                     if args.rank {
-                        println!("{}", dir);
+                        println!("{:.2} {}", dir.rank, dir);
                     } else {
-                        println!("{}", dir.path);
+                        println!("{}", dir);
                     }
                 } else {
                     println!("entry not found for {}", args.entry);
@@ -198,10 +185,10 @@ impl AppExt for Cli {
                 let res = client.list().context("failed to get list")?;
                 if let Some(list) = res {
                     for dir in list.into_iter() {
-                        if !list_args.rank {
-                            println!("{}", dir);
+                        if list_args.rank {
+                            println!("{:.2} {}", dir.rank, dir);
                         }else{
-                            println!("{} {}", dir.rank, dir);
+                            println!("{}", dir);
                         }
                     }
                 }

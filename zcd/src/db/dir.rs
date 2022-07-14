@@ -104,6 +104,7 @@ impl<'a> OpsDelegate for DirList<'a> {
             let rank = frecent(now, dir.last_accessed, dir.rank);
             dir.rank = rank;
         }
+        // TODO we could remove outdated or invalid entries here
     }
 
     fn insert_or_update(&mut self, p: Cow<'_, str>) {
@@ -117,8 +118,7 @@ impl<'a> OpsDelegate for DirList<'a> {
             });
         } else {
             let mut dir = self.get_mut(&key).unwrap();
-            let rank = frecent(now, dir);
-            dir.rank = rank;
+            dir.rank = frecent(now, dir.last_accessed, dir.rank);
             dir.last_accessed = now;
         }
     }
@@ -200,7 +200,7 @@ mod test_dir {
             rank: 1.0,
             last_accessed: now(),
         };
-        assert_eq!(foo.to_string(), "1.00 /usr/local/bin");
+        assert_eq!(foo.to_string(), "/usr/local/bin");
     }
 
     #[test]
