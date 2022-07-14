@@ -50,8 +50,9 @@ zcd --daemon
 
 - [x] list entries
 - [x] insert entries
-- [ ] zsh shell script wrapper
-  - [ ] zsh
-- [ ] use better algorithm
+- [x] zsh shell script wrapper
+  - [x] zsh
+- [x] use better algorithm
+  - [x] fzy
 - [x] cli mode
 - [ ] server mode
