@@ -2,22 +2,15 @@ mod client;
 
 use anyhow::{Context, Result};
 use client::Client;
-use std::path::{Path, PathBuf};
 
 use crate::config::{config_file, generate_config_file};
-use crate::server::{check_server_alive, DbServer};
 
 use clap::{ArgEnum, Args, Parser, Subcommand};
-/// Zcd runs in two modes: cli and server.
-/// By default it would use cli mode if server isn't running.
-///
-/// In cli mode, it behaves like zoxide.
-///
-/// In server mode, all instructions are sent to the db server running in the background.
-/// You can use `zcd server <insruction>` to manage the server.
+
+/// zcd – a simple jump navigation CLI tool.
 
 #[derive(Debug, Parser)]
-#[clap(name="zcd",author, about="zcd server cli",long_about = None)]
+#[clap(name="zcd",author, about="zcd CLI tool",long_about = None)]
 pub struct Cli {
     #[clap(subcommand)]
     pub command: Commands,
@@ -45,16 +38,15 @@ pub enum Commands {
     /// Export data into datafile
     #[clap(arg_required_else_help = true)]
     Export(ImportExportArgs),
-    /// Server management
-    #[clap(arg_required_else_help = true)]
-    Server(ServerArgs),
     /// config management
     #[clap(arg_required_else_help = true)]
     Config(ConfigArgs),
+    /// clear all history
+    Clear,
 }
 
 #[derive(Debug, Args)]
-pub struct ListArgs{
+pub struct ListArgs {
     /// show rank
     #[clap(short, long)]
     rank: bool,
@@ -96,12 +88,6 @@ enum DataFileFormat {
 }
 
 #[derive(Debug, Args)]
-pub struct ServerArgs {
-    #[clap(subcommand)]
-    command: ServerCmds,
-}
-
-#[derive(Debug, Args)]
 struct DbConfigArgs {
     /// use a specified zcd config file
     #[clap(long, short)]
@@ -119,18 +105,6 @@ pub struct ConfigArgs {
     generate: bool,
 }
 
-#[derive(Debug, Subcommand)]
-enum ServerCmds {
-    /// run server
-    Run(DbConfigArgs),
-    /// stop server
-    Stop,
-    /// restart server
-    Restart(DbConfigArgs),
-    /// check server status
-    Status,
-}
-
 pub trait AppExt {
     fn run(&self) -> Result<()>;
 }
@@ -138,6 +112,11 @@ pub trait AppExt {
 impl AppExt for Cli {
     fn run(&self) -> Result<()> {
         match &self.command {
+            Commands::Clear => {
+                let mut client = Client::new().context("failed to create client")?;
+                client.clear()?;
+                println!("All entries have been cleared.");
+            }
             Commands::Insert { entry } => {
                 let mut client = Client::new().context("failed to create client")?;
                 client.insert(entry)?;
@@ -187,49 +166,8 @@ impl AppExt for Cli {
                     for dir in list.into_iter() {
                         if list_args.rank {
                             println!("{:.2} {}", dir.rank, dir);
-                        }else{
+                        } else {
                             println!("{}", dir);
-                        }
-                    }
-                }
-            }
-            Commands::Server(server) => {
-                let server_cmd = &server.command;
-                match server_cmd {
-                    ServerCmds::Run(run_args) => {
-                        let config_path = if run_args.path.is_some() {
-                            PathBuf::from(run_args.path.as_ref().unwrap())
-                        } else {
-                            config_file().unwrap()
-                        };
-                        let server = DbServer::new(true, Path::new(config_path.as_path()))
-                            .context("failed to init db server")?;
-                        if run_args.daemon {
-                            server.start_daemonized().context("failed to daemonize")?;
-                        } else {
-                            server.run().context("failed to run")?;
-                        }
-                    }
-                    ServerCmds::Stop => {
-                        if check_server_alive() {
-                            println!("Stop server");
-                        } else {
-                            println!("Server isn't running");
-                        }
-                    }
-                    ServerCmds::Restart(config_path) => {
-                        if config_path.path.is_some() {
-                            println!("Run server with {}", config_path.path.as_ref().unwrap());
-                        } else {
-                            println!("Run server");
-                        }
-                    }
-                    ServerCmds::Status => {
-                        if check_server_alive() {
-                            // TODO
-                            println!("Server is running for...");
-                        } else {
-                            println!("Server isn't running");
                         }
                     }
                 }

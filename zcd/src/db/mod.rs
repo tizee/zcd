@@ -39,6 +39,10 @@ impl OpsDelegate for Database<'_> {
     fn list(&self) -> Option<Vec<Dir>> {
         self.delegate.list()
     }
+
+    fn clear_data(&mut self) {
+        self.delegate.clear_data();
+    }
 }
 
 fn load_from_zcd_data_impl(p: &String) -> Result<DirList<'static>> {
@@ -112,10 +116,96 @@ impl Database<'_> {
         }
         Ok(())
     }
+
+    pub fn clear(&mut self) -> Result<()> {
+        // Clear the in-memory database (DirList is a wrapper around HashMap)
+        self.delegate.clear_data();
+        self.dirty = true;
+
+        // Remove the datafile if it exists.
+        let datafile = std::path::Path::new(&self.config_file.config.datafile);
+        if datafile.exists() {
+            std::fs::remove_file(datafile)
+                .with_context(|| format!("failed to remove datafile: {}", datafile.display()))?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test_db {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
     #[test]
-    fn test_frecent() {}
+    fn test_clear_database() {
+        // Create a temporary directory for config and data.
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join("config");
+        let datafile_path = temp_dir.path().join("zcddata");
+
+        // Create a config file with our test datafile path.
+        let config_contents = format!(
+            "max_age=5000\ndatafile={}\nexclude_dirs=[]\ndebug=false",
+            datafile_path.to_string_lossy()
+        );
+        fs::write(&config_path, config_contents).unwrap();
+
+        // Write valid content to the data file (empty but valid format).
+        let valid_data = "/dummy/path|1.0|1626969287\n"; // Example of valid entry: path|rank|timestamp
+        fs::write(&datafile_path, valid_data).unwrap();
+
+        // Ensure the datafile exists.
+        assert!(datafile_path.exists(), "Datafile should exist before clear");
+
+        // Initialize the Database.
+        let mut db = Database::new(&config_path).unwrap();
+        // Insert a dummy entry to ensure the in-memory database is not empty.
+        db.insert_or_update("dummy".into());
+
+        // Invoke clear.
+        db.clear().unwrap();
+
+        // Check that the in-memory database is empty.
+        assert_eq!(
+            db.delegate.len(),
+            0,
+            "Database delegate should be empty after clear"
+        );
+        // Check that the datafile has been removed.
+        assert!(
+            !datafile_path.exists(),
+            "Datafile should be removed after clear"
+        );
+    }
+
+    #[test]
+    fn test_clear_without_existing_datafile() {
+        // Create a temporary directory with a config file but no datafile.
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join("config");
+        let datafile_path = temp_dir.path().join("zcddata");
+
+        let config_contents = format!(
+            "max_age=5000\ndatafile={}\nexclude_dirs=[]\ndebug=false",
+            datafile_path.to_string_lossy()
+        );
+        fs::write(&config_path, config_contents).unwrap();
+
+        // Ensure the datafile does not exist.
+        if datafile_path.exists() {
+            fs::remove_file(&datafile_path).unwrap();
+        }
+        assert!(!datafile_path.exists());
+
+        let mut db = Database::new(&config_path).unwrap();
+        // Insert a dummy entry.
+        db.insert_or_update("dummy".into());
+
+        // Call clear; it should succeed even if the file is missing.
+        db.clear().unwrap();
+        // In-memory database should be empty.
+        assert_eq!(db.delegate.len(), 0);
+    }
 }

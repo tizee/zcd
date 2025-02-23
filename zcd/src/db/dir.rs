@@ -86,6 +86,7 @@ pub trait OpsDelegate {
     fn query<S: AsRef<str>>(&self, pattern: S) -> Option<Vec<Dir>>;
 
     fn list(&self) -> Option<Vec<Dir>>;
+    fn clear_data(&mut self);
 }
 
 #[inline]
@@ -159,33 +160,132 @@ impl<'a> OpsDelegate for DirList<'a> {
             .collect();
         Some(list_desc_order)
     }
+    fn clear_data(&mut self) {
+        self.clear();
+    }
 }
 
 // ranking algorithm: prefer higher rank
 fn frecent(now: Epoch, last_accessed: Epoch, last_rank: f64) -> Ranking {
-    static HOUR: u64 = 60 * 60;
-    static DAY: u64 = 24 * HOUR;
-    static WEEK: u64 = 7 * DAY;
     let dx = now - last_accessed;
-    let mut rank: f64;
-    // in 1 hour
-    if dx < HOUR {
-        if last_rank > 9999.0 {
-            // f(x) = ln(x) + x
-            rank = last_rank + last_rank.log2();
-        } else {
-            rank = last_rank * 4.0;
-        }
-    } else if dx < DAY {
-        // in 24 hour
-        rank = last_rank * 2.0;
-    } else if dx < WEEK {
-        // in 7 days
-        rank = last_rank * 0.5;
-    } else {
-        rank = last_rank * 0.25;
+    10000.0 * last_rank * (3.75 / (1.25 + 0.0001 * dx as f64))
+}
+
+#[cfg(test)]
+mod test_frecent {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // helper function to get a "now" timestamp
+    fn current_epoch() -> Epoch {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
-    rank
+
+    #[test]
+    fn test_frecent_now() {
+        let now = 1_600_000_000; // fixed timestamp
+                                 // dx = 0 => expected = 10000 * rank * (3.75/1.25) = 30000 * rank.
+        let score = frecent(now, now, 1.0);
+        assert!(
+            (score - 30000.0).abs() < 1e-6,
+            "Expected score ~30000, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_frecent_1_hour() {
+        let now = 1_600_000_000;
+        let last = now - 3600; // 1 hour ago
+        let score = frecent(now, last, 1.0);
+        let expected = 10000.0 * (3.75 / (1.25 + 0.0001 * 3600.0));
+        assert!(
+            (score - expected).abs() < 1e-6,
+            "Expected score {}, got {}",
+            expected,
+            score
+        );
+    }
+
+    #[test]
+    fn test_frecent_24_hours() {
+        let now = 1_600_000_000;
+        let last = now - 86400; // 24 hours ago
+        let score = frecent(now, last, 1.0);
+        let expected = 10000.0 * (3.75 / (1.25 + 0.0001 * 86400.0));
+        assert!(
+            (score - expected).abs() < 1e-6,
+            "Expected score {}, got {}",
+            expected,
+            score
+        );
+    }
+
+    #[test]
+    fn test_frecent_7_days() {
+        let now = 1_600_000_000;
+        let last = now - 604800; // 7 days ago
+        let score = frecent(now, last, 1.0);
+        let expected = 10000.0 * (3.75 / (1.25 + 0.0001 * 604800.0));
+        assert!(
+            (score - expected).abs() < 1e-6,
+            "Expected score {}, got {}",
+            expected,
+            score
+        );
+    }
+
+    #[test]
+    fn test_frecent_ordering() {
+        let now = 1_600_000_000;
+        let score_now = frecent(now, now, 1.0);
+        let score_hour = frecent(now, now - 3600, 1.0);
+        let score_day = frecent(now, now - 86400, 1.0);
+        let score_week = frecent(now, now - 604800, 1.0);
+        let score_8days = frecent(now, now - 691200, 1.0); // 8 days ago
+
+        // Scores should strictly decrease as dx increases.
+        assert!(
+            score_now > score_hour,
+            "score_now {} <= score_hour {}",
+            score_now,
+            score_hour
+        );
+        assert!(
+            score_hour > score_day,
+            "score_hour {} <= score_day {}",
+            score_hour,
+            score_day
+        );
+        assert!(
+            score_day > score_week,
+            "score_day {} <= score_week {}",
+            score_day,
+            score_week
+        );
+        assert!(
+            score_week > score_8days,
+            "score_week {} <= score_8days {}",
+            score_week,
+            score_8days
+        );
+    }
+
+    #[test]
+    fn test_frecent_scaled_rank() {
+        // Ensure that a different starting rank scales the result proportionally.
+        let now = 1_600_000_000;
+        let score1 = frecent(now, now - 3600, 1.0);
+        let score2 = frecent(now, now - 3600, 2.0);
+        assert!(
+            (score2 - 2.0 * score1).abs() < 1e-6,
+            "Rank scaling is off: {} vs {}",
+            score2,
+            2.0 * score1
+        );
+    }
 }
 
 #[cfg(test)]

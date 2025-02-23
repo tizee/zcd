@@ -30,13 +30,12 @@ SUBCOMMANDS:
     insert    insert or update an entry
     list      list all entries
     query     query an entry based on keyword
-    server    Server management
 ```
 
-### Run as daemon in background
+## Build from source
 
 ```
-zcd --daemon
+cargo build --path .
 ```
 
 ## Roadmap
@@ -48,4 +47,4 @@ zcd --daemon
 - [x] use better algorithm
   - [x] fzy
 - [x] cli mode
-- [x] server mode
+- ~~[x] server mode~~

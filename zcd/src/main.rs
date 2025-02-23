@@ -1,7 +1,6 @@
 mod cli;
 mod config;
 mod db;
-mod server;
 
 use clap::Parser;
 use cli::{AppExt, Cli};
