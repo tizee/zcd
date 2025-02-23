@@ -5,13 +5,13 @@ z implementation in Rust.
 ## Features
 
 - z-like behavior with script
-- longest substring matching algorithm for keyword
+- fzy matching algorithm
 - z compatible data format
 
 ## Usage
 
 ```
-zcd
+zcd CLI tool
 
 USAGE:
     zcd [OPTIONS] <SUBCOMMAND>
@@ -21,12 +21,12 @@ OPTIONS:
     -v, --verbose
 
 SUBCOMMANDS:
+    clear     clear all history
     config    config management
     delete    delete an entry
     export    Export data into datafile
     help      Print this message or the help of the given subcommand(s)
     import    Import data from datafile
-    init      install shell script
     insert    insert or update an entry
     list      list all entries
     query     query an entry based on keyword
