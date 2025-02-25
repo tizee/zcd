@@ -144,7 +144,6 @@ impl<'a> OpsDelegate for DirList<'a> {
             // multiply by 1000 is enough for handling small float numbers
             .sorted_by(|a, b| ((&b.0 * 1000.0) as u64).cmp(&((&a.0 * 1000.0) as u64)))
             .filter_map(|a| if a.0 > 0.0 { Some(a.1) } else { None })
-            .sorted_by(|a, b| Ord::cmp(&b, &a))
             .collect();
         Some(list_desc_order)
     }
