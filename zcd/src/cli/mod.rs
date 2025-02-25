@@ -43,6 +43,8 @@ pub enum Commands {
     Config(ConfigArgs),
     /// clear all history
     Clear,
+    /// display version information
+    Version,
 }
 
 #[derive(Debug, Args)]
@@ -176,6 +178,9 @@ impl AppExt for Cli {
                 if config.generate {
                     generate_config_file();
                 }
+            }
+            Commands::Version => {
+                println!("zcd version {}", env!("CARGO_PKG_VERSION"));
             }
         }
         Ok(())

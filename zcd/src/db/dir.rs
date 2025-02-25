@@ -168,7 +168,11 @@ impl<'a> OpsDelegate for DirList<'a> {
 // ranking algorithm: prefer higher rank
 fn frecent(now: Epoch, last_accessed: Epoch, last_rank: f64) -> Ranking {
     let dx = now - last_accessed;
-    10000.0 * last_rank * (3.75 / (1.25 + 0.0001 * dx as f64))
+    let time_factor = 3.75 / (1.25 + 0.0001 * dx as f64);
+    
+    // Cap the result to prevent unbounded growth
+    let new_rank = 10.0 * time_factor;
+    new_rank.min(1000.0) // Set a reasonable maximum value
 }
 
 #[cfg(test)]
@@ -186,11 +190,11 @@ mod test_frecent {
     #[test]
     fn test_frecent_now() {
         let now = 1_600_000_000; // fixed timestamp
-                                 // dx = 0 => expected = 10000 * rank * (3.75/1.25) = 30000 * rank.
+        // dx = 0 => expected = 10.0 * (3.75/1.25) = 30.0
         let score = frecent(now, now, 1.0);
         assert!(
-            (score - 30000.0).abs() < 1e-6,
-            "Expected score ~30000, got {}",
+            (score - 30.0).abs() < 1e-6,
+            "Expected score ~30.0, got {}",
             score
         );
     }
@@ -200,7 +204,7 @@ mod test_frecent {
         let now = 1_600_000_000;
         let last = now - 3600; // 1 hour ago
         let score = frecent(now, last, 1.0);
-        let expected = 10000.0 * (3.75 / (1.25 + 0.0001 * 3600.0));
+        let expected = 10.0 * (3.75 / (1.25 + 0.0001 * 3600.0));
         assert!(
             (score - expected).abs() < 1e-6,
             "Expected score {}, got {}",
@@ -214,7 +218,7 @@ mod test_frecent {
         let now = 1_600_000_000;
         let last = now - 86400; // 24 hours ago
         let score = frecent(now, last, 1.0);
-        let expected = 10000.0 * (3.75 / (1.25 + 0.0001 * 86400.0));
+        let expected = 10.0 * (3.75 / (1.25 + 0.0001 * 86400.0));
         assert!(
             (score - expected).abs() < 1e-6,
             "Expected score {}, got {}",
@@ -228,7 +232,7 @@ mod test_frecent {
         let now = 1_600_000_000;
         let last = now - 604800; // 7 days ago
         let score = frecent(now, last, 1.0);
-        let expected = 10000.0 * (3.75 / (1.25 + 0.0001 * 604800.0));
+        let expected = 10.0 * (3.75 / (1.25 + 0.0001 * 604800.0));
         assert!(
             (score - expected).abs() < 1e-6,
             "Expected score {}, got {}",
@@ -274,16 +278,28 @@ mod test_frecent {
     }
 
     #[test]
-    fn test_frecent_scaled_rank() {
-        // Ensure that a different starting rank scales the result proportionally.
+    fn test_frecent_max_cap() {
+        // Test that the score is capped at 1000.0
+        let now = 1_600_000_000;
+        let score = frecent(now, now, 1000.0); // Even with high previous rank
+        assert!(
+            score <= 1000.0,
+            "Score should be capped at 1000.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_frecent_input_rank_ignored() {
+        // Verify that the input rank doesn't affect the output
         let now = 1_600_000_000;
         let score1 = frecent(now, now - 3600, 1.0);
         let score2 = frecent(now, now - 3600, 2.0);
         assert!(
-            (score2 - 2.0 * score1).abs() < 1e-6,
-            "Rank scaling is off: {} vs {}",
-            score2,
-            2.0 * score1
+            (score1 - score2).abs() < 1e-6,
+            "Input rank should be ignored, got {} vs {}",
+            score1,
+            score2
         );
     }
 }

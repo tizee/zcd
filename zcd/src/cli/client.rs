@@ -31,12 +31,8 @@ impl Client {
             if !list.is_empty() {
                 return Ok(Some(list[0].clone()));
             }
-            println!("No entries found matching: {}", pattern);
-            Ok(None)
-        } else {
-            println!("No entries found matching: {}", pattern);
-            Ok(None)
         }
+        Ok(None)
     }
 
     pub fn list(&self) -> Result<Option<Vec<Dir>>> {
