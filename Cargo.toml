@@ -2,3 +2,6 @@
 members = ["fuzzy", "zcd"]
 default-members = ["zcd"]
 resolver = "2"
+
+[profile.release]
+debug = 1
