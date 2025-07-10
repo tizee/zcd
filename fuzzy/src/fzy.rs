@@ -34,8 +34,8 @@ impl FzyMatcher {
     fn compute_score(&self) -> f64 {
         let n = self.needle_len;
         let m = self.haystack_len;
-        let mut dp_match = vec![vec![SCORE_MIN; m], vec![SCORE_MIN; m]]; // Best score ending with a match.
-        let mut dp_score = vec![vec![SCORE_MIN; m], vec![SCORE_MIN; m]]; // Overall best score.
+        let mut dp_match = [vec![SCORE_MIN; m], vec![SCORE_MIN; m]]; // Best score ending with a match.
+        let mut dp_score = [vec![SCORE_MIN; m], vec![SCORE_MIN; m]]; // Overall best score.
 
         for i in 0..n {
             let gap_score = if i == n - 1 { FZY_SCORE_GAP_TRAILING } else { FZY_SCORE_GAP_INNER };

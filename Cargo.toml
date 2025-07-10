@@ -1,4 +1,4 @@
 [workspace]
-members= ["fuzzy","zcd"]
+members = ["fuzzy", "zcd"]
 default-members = ["zcd"]
-workspace.resolver = "2"
+resolver = "2"

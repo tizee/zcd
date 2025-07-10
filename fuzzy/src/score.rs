@@ -1,4 +1,5 @@
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]
+#[allow(dead_code)]
 pub enum FzyMatchType {
     Leading,
     Trailing,

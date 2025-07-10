@@ -72,14 +72,16 @@ debug=false "#,
         std::env::set_var("ZCD_CONFIG_FILE", config_path.to_str().unwrap());
 
         let mut client = Client::new().unwrap();
-        let entry = "/tmp/test-entry";
-        client.insert(entry).unwrap();
+        let entry = temp_dir.path().join("test-entry");
+        std::fs::create_dir_all(&entry).unwrap();
+        let entry_str = entry.to_str().unwrap();
+        client.insert(entry_str).unwrap();
 
         let query_result = client.query("test").unwrap();
         assert!(query_result.is_some());
-        assert_eq!(query_result.unwrap().path, entry);
+        assert_eq!(query_result.unwrap().path, entry_str);
 
-        client.delete(entry).unwrap();
+        client.delete(entry_str).unwrap();
         let query_result = client.query("test").unwrap();
         assert!(query_result.is_none());
     }

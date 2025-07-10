@@ -10,11 +10,13 @@ use itertools::Itertools;
 
 pub trait DataFileIO {
     fn to_bytes(&self, data: &DirList) -> Result<Vec<u8>>;
+    #[allow(clippy::wrong_self_convention)]
     fn from_bytes<T: Read>(&self, f: T) -> Result<DirList>;
 }
 
 pub struct ZcdDataFile;
 pub struct ZDataFile;
+#[allow(dead_code)]
 pub enum DataFile {
     Zcd(ZcdDataFile),
     Z(ZDataFile),
@@ -105,6 +107,7 @@ impl DataFileIO for ZcdDataFile {
                     path: Cow::Owned(path_str.into()),
                     rank,
                     last_accessed,
+                    visit_count: 1,
                 },
             );
         }
@@ -163,6 +166,7 @@ impl DataFileIO for ZDataFile {
                     path: Cow::Owned(path_str.into()),
                     rank,
                     last_accessed,
+                    visit_count: 1,
                 },
             );
         }
@@ -188,10 +192,10 @@ impl DataFileIO for DataFile {
 #[cfg(test)]
 mod test_data {
     use super::{
-        expand_path, open_file, DataFile, DataFileIO, Dir, DirList, ZDataFile, ZcdDataFile,
+        expand_path, open_file, DataFile, DataFileIO, Dir, DirList, ZDataFile,
     };
     use std::borrow::Cow;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     #[test]
     fn z_zero_copy() {
         let path = "/usr/bin";
@@ -199,6 +203,7 @@ mod test_data {
             path: path.into(),
             rank: 1.0,
             last_accessed: 0,
+            visit_count: 1,
         };
         let dirs = DirList::from([(path.to_string(), dir)]);
 

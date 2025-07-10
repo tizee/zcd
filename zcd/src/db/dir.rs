@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::time::SystemTime;
 
 use fuzzy::Matcher;
@@ -21,6 +22,8 @@ pub struct Dir<'a> {
     pub path: Cow<'a, str>,
     pub rank: Ranking,
     pub last_accessed: Epoch,
+    #[serde(default)]
+    pub visit_count: u32,
 }
 
 impl Ord for Dir<'_> {
@@ -43,7 +46,6 @@ impl PartialEq for Dir<'_> {
 
 impl Display for Dir<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut rank = self.rank;
         let path = self.path.to_string();
         write!(f, "{}", path)
     }
@@ -60,7 +62,7 @@ impl<'a, const N: usize> From<[(String, Dir<'a>); N]> for DirList<'a> {
     }
 }
 
-impl<'a> DirList<'a> {
+impl DirList<'_> {
     pub fn new() -> Self {
         DirList(HashMap::new())
     }
@@ -73,7 +75,7 @@ impl<'a> Deref for DirList<'a> {
     }
 }
 
-impl<'a> DerefMut for DirList<'a> {
+impl DerefMut for DirList<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -97,15 +99,26 @@ fn now() -> u64 {
         .as_secs()
 }
 
-impl<'a> OpsDelegate for DirList<'a> {
-    // update all entries' ranks using current time
+impl OpsDelegate for DirList<'_> {
+    // update all entries' ranks using current time and remove non-existent paths
     fn update_frecent(&mut self) {
         let now = now();
-        for (_, dir) in self.iter_mut() {
-            let rank = frecent(now, dir.last_accessed, dir.rank);
+        let mut paths_to_remove = Vec::new();
+        
+        for (path, dir) in self.iter_mut() {
+            // Mark non-existent paths for removal
+            if !Path::new(path).exists() {
+                paths_to_remove.push(path.clone());
+                continue;
+            }
+            let rank = frecent(now, dir.last_accessed, dir.rank, dir.visit_count);
             dir.rank = rank;
         }
-        // TODO we could remove outdated or invalid entries here
+        
+        // Remove non-existent paths
+        for path in paths_to_remove {
+            self.remove(&path);
+        }
     }
 
     fn insert_or_update(&mut self, p: Cow<'_, str>) {
@@ -116,10 +129,12 @@ impl<'a> OpsDelegate for DirList<'a> {
                 path: Cow::Owned(p.into()),
                 rank: 1.0,
                 last_accessed: now,
+                visit_count: 1,
             });
         } else {
-            let mut dir = self.get_mut(&key).unwrap();
-            dir.rank = frecent(now, dir.last_accessed, dir.rank);
+            let dir = self.get_mut(&key).unwrap();
+            dir.visit_count += 1;
+            dir.rank = frecent(now, dir.last_accessed, dir.rank, dir.visit_count);
             dir.last_accessed = now;
         }
     }
@@ -134,6 +149,10 @@ impl<'a> OpsDelegate for DirList<'a> {
         let pattern = pattern.as_ref();
         let mut candidates = Vec::new();
         for (path, dir) in self.iter() {
+            // Skip non-existent paths
+            if !Path::new(path).exists() {
+                continue;
+            }
             if Matcher::has_match(pattern, path) {
                 let fzy = Matcher::Fzy;
                 candidates.push((fzy.match_score(pattern, path), dir.clone()));
@@ -151,6 +170,10 @@ impl<'a> OpsDelegate for DirList<'a> {
     fn list(&self) -> Option<Vec<Dir>> {
         let mut candidates = Vec::new();
         for (_, dir) in self.iter() {
+            // Skip non-existent paths
+            if !Path::new(dir.path.as_ref()).exists() {
+                continue;
+            }
             candidates.push(dir.clone());
         }
         let list_desc_order = candidates
@@ -164,13 +187,23 @@ impl<'a> OpsDelegate for DirList<'a> {
     }
 }
 
-// ranking algorithm: prefer higher rank
-fn frecent(now: Epoch, last_accessed: Epoch, last_rank: f64) -> Ranking {
+// ranking algorithm: combine frequency (visit count) with recency
+fn frecent(now: Epoch, last_accessed: Epoch, _last_rank: f64, visit_count: u32) -> Ranking {
     let dx = now - last_accessed;
-    let time_factor = 3.75 / (1.25 + 0.0001 * dx as f64);
     
-    // Cap the result to prevent unbounded growth
-    let new_rank = 10.0 * time_factor;
+    // Recency factor: higher score for more recent access
+    let recency_factor = if dx == 0 {
+        1.0
+    } else {
+        let hours_elapsed = dx as f64 / 3600.0;
+        1.0 / (1.0 + hours_elapsed.ln().max(0.1)) // Avoid log(0), use max to prevent negative values
+    };
+    
+    // Frequency factor: higher score for more visits
+    let frequency_factor = (visit_count as f64).ln() + 1.0;
+    
+    // Combine both factors
+    let new_rank = frequency_factor * recency_factor * 100.0;
     new_rank.min(1000.0) // Set a reasonable maximum value
 }
 
@@ -179,6 +212,7 @@ mod test_frecent {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
     // helper function to get a "now" timestamp
+    #[allow(dead_code)]
     fn current_epoch() -> Epoch {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -189,11 +223,13 @@ mod test_frecent {
     #[test]
     fn test_frecent_now() {
         let now = 1_600_000_000; // fixed timestamp
-        // dx = 0 => expected = 10.0 * (3.75/1.25) = 30.0
-        let score = frecent(now, now, 1.0);
+        let score = frecent(now, now, 1.0, 1);
+        // dx = 0, visit_count = 1 => frequency_factor = ln(1) + 1 = 1.0, recency_factor = 1.0
+        let expected = 1.0 * 1.0 * 100.0;
         assert!(
-            (score - 30.0).abs() < 1e-6,
-            "Expected score ~30.0, got {}",
+            (score - expected).abs() < 1e-6,
+            "Expected score ~{}, got {}",
+            expected,
             score
         );
     }
@@ -202,8 +238,10 @@ mod test_frecent {
     fn test_frecent_1_hour() {
         let now = 1_600_000_000;
         let last = now - 3600; // 1 hour ago
-        let score = frecent(now, last, 1.0);
-        let expected = 10.0 * (3.75 / (1.25 + 0.0001 * 3600.0));
+        let score = frecent(now, last, 1.0, 1);
+        let hours_elapsed = 3600.0_f64 / 3600.0;
+        let recency_factor = 1.0 / (1.0 + hours_elapsed.ln().max(0.1));
+        let expected = 1.0 * recency_factor * 100.0;
         assert!(
             (score - expected).abs() < 1e-6,
             "Expected score {}, got {}",
@@ -216,8 +254,10 @@ mod test_frecent {
     fn test_frecent_24_hours() {
         let now = 1_600_000_000;
         let last = now - 86400; // 24 hours ago
-        let score = frecent(now, last, 1.0);
-        let expected = 10.0 * (3.75 / (1.25 + 0.0001 * 86400.0));
+        let score = frecent(now, last, 1.0, 1);
+        let hours_elapsed = 86400.0_f64 / 3600.0;
+        let recency_factor = 1.0 / (1.0 + hours_elapsed.ln().max(0.1));
+        let expected = 1.0 * recency_factor * 100.0;
         assert!(
             (score - expected).abs() < 1e-6,
             "Expected score {}, got {}",
@@ -230,8 +270,10 @@ mod test_frecent {
     fn test_frecent_7_days() {
         let now = 1_600_000_000;
         let last = now - 604800; // 7 days ago
-        let score = frecent(now, last, 1.0);
-        let expected = 10.0 * (3.75 / (1.25 + 0.0001 * 604800.0));
+        let score = frecent(now, last, 1.0, 1);
+        let hours_elapsed = 604800.0_f64 / 3600.0;
+        let recency_factor = 1.0 / (1.0 + hours_elapsed.ln().max(0.1));
+        let expected = 1.0 * recency_factor * 100.0;
         assert!(
             (score - expected).abs() < 1e-6,
             "Expected score {}, got {}",
@@ -243,11 +285,11 @@ mod test_frecent {
     #[test]
     fn test_frecent_ordering() {
         let now = 1_600_000_000;
-        let score_now = frecent(now, now, 1.0);
-        let score_hour = frecent(now, now - 3600, 1.0);
-        let score_day = frecent(now, now - 86400, 1.0);
-        let score_week = frecent(now, now - 604800, 1.0);
-        let score_8days = frecent(now, now - 691200, 1.0); // 8 days ago
+        let score_now = frecent(now, now, 1.0, 1);
+        let score_hour = frecent(now, now - 3600, 1.0, 1);
+        let score_day = frecent(now, now - 86400, 1.0, 1);
+        let score_week = frecent(now, now - 604800, 1.0, 1);
+        let score_8days = frecent(now, now - 691200, 1.0, 1); // 8 days ago
 
         // Scores should strictly decrease as dx increases.
         assert!(
@@ -280,7 +322,7 @@ mod test_frecent {
     fn test_frecent_max_cap() {
         // Test that the score is capped at 1000.0
         let now = 1_600_000_000;
-        let score = frecent(now, now, 1000.0); // Even with high previous rank
+        let score = frecent(now, now, 1000.0, 1000); // Even with high previous rank and visit count
         assert!(
             score <= 1000.0,
             "Score should be capped at 1000.0, got {}",
@@ -289,14 +331,14 @@ mod test_frecent {
     }
 
     #[test]
-    fn test_frecent_input_rank_ignored() {
-        // Verify that the input rank doesn't affect the output
+    fn test_frecent_visit_count_matters() {
+        // Verify that visit count affects the output
         let now = 1_600_000_000;
-        let score1 = frecent(now, now - 3600, 1.0);
-        let score2 = frecent(now, now - 3600, 2.0);
+        let score1 = frecent(now, now - 3600, 1.0, 1);
+        let score2 = frecent(now, now - 3600, 1.0, 10);
         assert!(
-            (score1 - score2).abs() < 1e-6,
-            "Input rank should be ignored, got {} vs {}",
+            score2 > score1,
+            "Higher visit count should produce higher score, got {} vs {}",
             score1,
             score2
         );
@@ -314,6 +356,7 @@ mod test_dir {
             path: Cow::Owned("/usr/local/bin".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         assert_eq!(foo.to_string(), "/usr/local/bin");
     }
@@ -324,16 +367,19 @@ mod test_dir {
             path: Cow::Owned("/usr/local/bin".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         let foo1 = Dir {
             path: Cow::Owned("/usr/local/bin".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         let foo2 = Dir {
             path: Cow::Owned("/usr/local/bin".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         assert_eq!(foo, foo1);
         let mut dir_list = DirList::new();
@@ -349,21 +395,25 @@ mod test_dir {
             path: Cow::Owned("/projects/foo/bar".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         let foo1 = Dir {
             path: Cow::Owned("/projects/bar/foo".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         let foo2 = Dir {
             path: Cow::Owned("/.config/zcd".into()),
             rank: 1.0,
             last_accessed: now(),
+            visit_count: 1,
         };
         let foo3 = Dir {
             path: Cow::Owned("/projects/rust/zcd".into()),
             rank: 4.0,
             last_accessed: now(),
+            visit_count: 5,
         };
         let mut dir_list = DirList::new();
         dir_list.insert(foo.path.to_string(), foo);

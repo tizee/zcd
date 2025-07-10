@@ -39,14 +39,27 @@ function __zcd_z() {
     __zcd_cd $1
   else
     # sorting candidates
-    local __zcd_result="$(zcd query -- "$@")" && __zcd_cd "$__zcd_result"
-    return 0
+    local __zcd_result="$(zcd query -- "$@")"
+    if [[ -n "$__zcd_result" ]] && [[ -d "$__zcd_result" ]]; then
+      __zcd_cd "$__zcd_result"
+      return 0
+    else
+      builtin printf "zcd: no match found for '%s'\n" "$*"
+      return 1
+    fi
   fi
 }
 
 # query interactively
 function __zcd_zi(){
-    local __zcd_result="$(zcd list | fzf "$@" --preview="tree {} -L 1")" && __zcd_cd "$__zcd_result"
+    local __zcd_result="$(zcd list | fzf "$@" --preview="tree {} -L 1")"
+    if [[ -n "$__zcd_result" ]] && [[ -d "$__zcd_result" ]]; then
+        __zcd_cd "$__zcd_result"
+        return 0
+    else
+        builtin printf "zcd: no valid directory selected\n"
+        return 1
+    fi
 }
 
 # zsh hook

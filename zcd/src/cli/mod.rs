@@ -3,7 +3,7 @@ mod client;
 use anyhow::{Context, Result};
 use client::Client;
 
-use crate::config::{config_file, generate_config_file};
+use crate::config::generate_config_file;
 
 use clap::{ArgEnum, Args, Parser, Subcommand};
 

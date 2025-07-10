@@ -17,16 +17,20 @@ pub fn home_dir() -> Option<PathBuf> {
 
 pub struct ConfigFile {
     pub config: Config,
+    #[allow(dead_code)]
     pub config_path: String,
 }
 
 #[derive(Debug)]
 pub struct Config {
     /// lifetime in millisecond
+    #[allow(dead_code)]
     pub max_age: u64,
     /// debug mode
+    #[allow(dead_code)]
     pub debug: bool,
     /// paths to exclude for z
+    #[allow(dead_code)]
     pub exclude_dirs: Vec<String>,
     /// datafile path
     pub datafile: String,
@@ -124,12 +128,11 @@ pub fn generate_config_file() {
         }
     } else {
         let config_dir = config_file.parent();
-        match config_dir {
-            Some(path) => match fs::create_dir_all(path) {
+        if let Some(path) = config_dir { 
+            match fs::create_dir_all(path) {
                 Ok(_) => {}
                 Err(error) => println!("{:?}", error),
-            },
-            None => {}
+            }
         }
     }
 
@@ -153,6 +156,7 @@ exclude_dirs=[]
     };
 }
 
+#[allow(dead_code)]
 pub fn load_default_config() -> Result<Config> {
     load_config_from_path(config_file().unwrap())
 }
@@ -160,7 +164,7 @@ pub fn load_default_config() -> Result<Config> {
 pub fn load_config_from_path<P: AsRef<Path>>(path: P) -> Result<Config> {
     let path = path.as_ref();
     if path.exists() && path.is_file() {
-        return match File::open(&path) {
+        return match File::open(path) {
             Ok(file) => read_config(file),
             Err(err) => Err(anyhow!(format!("{}: {}", path.display(), err))),
         };
@@ -203,7 +207,7 @@ impl FromStr for ConfigKeyWord {
 fn parse_config(args: Vec<String>) -> Result<Config> {
     let mut builder = ConfigBuilder::new();
 
-    for (_, arg) in args.into_iter().enumerate() {
+    for arg in args.into_iter() {
         (|| -> Result<()> {
             let (key, value) = arg
                 .split_once('=')

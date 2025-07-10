@@ -8,7 +8,7 @@ use std::path::Path;
 use data::{expand_path, open_file, write_file, DataFile, DataFileIO, ZDataFile, ZcdDataFile};
 pub use dir::{Dir, DirList, OpsDelegate};
 
-use crate::config::{self, config_file, load_config_from_path, load_default_config, ConfigFile};
+use crate::config::{load_config_from_path, ConfigFile};
 
 pub struct Database<'a> {
     delegate: DirList<'a>,
@@ -59,6 +59,7 @@ fn load_from_zcd_data_impl(p: &String) -> Result<DirList<'static>> {
     }
 }
 
+#[allow(dead_code)]
 pub fn load_from_z_data_impl(p: &String) -> Result<DirList<'static>> {
     let path = expand_path(p).context("failed to resolve datafile path")?;
     if !path.exists() {
@@ -89,6 +90,7 @@ impl Database<'_> {
         })
     }
 
+    #[allow(dead_code)]
     pub fn load_from_zcd(&mut self, p: &Path) -> Result<()> {
         let dir_list =
             load_from_zcd_data_impl(&p.display().to_string()).context("failed to load data")?;
@@ -96,6 +98,7 @@ impl Database<'_> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn load_from_z(&mut self, p: &Path) -> Result<()> {
         let dir_list =
             load_from_z_data_impl(&p.display().to_string()).context("failed to load data")?;
