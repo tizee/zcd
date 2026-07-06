@@ -3,5 +3,13 @@ members = ["fuzzy", "zcd"]
 default-members = ["zcd"]
 resolver = "2"
 
+[profile.dev]
+opt-level = 0
+debug = true
+
 [profile.release]
-debug = 1
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
