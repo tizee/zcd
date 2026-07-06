@@ -9,11 +9,8 @@ This file provides guidance to AI coding agents when working with code in this r
 cargo build
 cargo build --release
 
-# Run all tests (workspace-wide)
+# Run all tests
 cargo test --all
-
-# Run only zcd crate tests
-cargo test -p zcd
 
 # Format code
 make fmt
@@ -32,19 +29,8 @@ There is no CI/CD pipeline configured. All checks are manual.
 
 ## Architecture
 
-This is a Cargo workspace with two crates. Full algorithm design doc:
+This is a Cargo workspace with a single crate. Full algorithm design doc:
 `analysis/matching-and-ranking.md`.
-
-### `fuzzy/` — library crate
-Typo-tolerant fuzzy matching engine based on the **fzy** algorithm (ported
-from C) extended with a *skip-needle* transition: a bounded number of needle
-characters may go unmatched at a fixed penalty, so transposed/mistyped
-queries still match. Admission is gated by LCS length (strict for needles
-≤ 3 chars, up to 25% misses otherwise). Public API: `match_score(needle,
-haystack) -> f64` and `has_match`, with `SCORE_MIN`/`SCORE_MAX` (±∞) as
-non-match/exact-match sentinels.
-
-The algorithm lives in `fuzzy/src/fzy.rs` with scoring constants in `fuzzy/src/score.rs`.
 
 ### `zcd/` — binary crate (the CLI)
 A `z`-inspired directory jumper. Module layout:
@@ -57,12 +43,15 @@ A `z`-inspired directory jumper. Module layout:
 | `db/mod.rs` | `Database` facade — load/save, import/export, aging trigger, dirty flag |
 | `db/dir.rs` | Core data model: `Dir` (path, rank, last_accessed), `DirList`, `OpsDelegate` trait, `frecency()` and `DirList::age()` |
 | `db/data.rs` | Single z-compatible datafile codec: `path|rank|last_accessed` |
+| `fuzzy/mod.rs` | Typo-tolerant fuzzy matching engine (formerly a separate crate, now inlined) |
+| `fuzzy/fzy.rs` | fzy DP scorer ported from C, extended with skip-needle tolerance |
+| `fuzzy/score.rs` | Scoring constants: `SCORE_MIN`/`SCORE_MAX` (±∞) |
 
 ### Data Flow
 
 1. On shell `chpwd` hook, the zsh plugin calls `zcd insert -- <pwd>`
 2. `Client::insert()` calls `Database::insert_or_update()` → rank += 1 → aging sweep if needed → `save()` to disk
-3. `z <pattern>` calls `zcd query -- <pattern>` → `Database::query()` → fuzzy match via `fuzzy` crate → sort by (score bucket, frecency) → prints top path to stdout (the shell's `cd` target); exits non-zero on no match
+3. `z <pattern>` calls `zcd query -- <pattern>` → `Database::query()` → fuzzy match via `zcd::fuzzy` module → sort by (score bucket, frecency) → prints top path to stdout (the shell's `cd` target); exits non-zero on no match
 
 ### Shell Integration
 

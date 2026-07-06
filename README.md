@@ -5,7 +5,7 @@ A fast and intelligent directory jumping tool written in Rust, inspired by z.
 ## Features
 
 - **Smart Ranking**: Improved frecency algorithm that combines visit frequency and recency
-- **Fuzzy Matching**: Fast fzy matching algorithm for flexible directory search
+- **Typo-tolerant Matching**: fzy-based fuzzy engine with skip-needle tolerance — transposed and mistyped characters still match
 - **Path Validation**: Automatic cleanup of non-existent directories
 - **Robust Error Handling**: Graceful handling of deleted or moved directories
 - **Shell Integration**: Easy integration with zsh (bash support planned)
@@ -19,12 +19,12 @@ A fast and intelligent directory jumping tool written in Rust, inspired by z.
 git clone <repository-url>
 cd zcd
 
-# Method 1: Install directly
-cargo install --path ./zcd --locked
+# Install directly (release profile with LTO)
+cargo install --path . --locked
 
-# Method 2: Build and copy manually
+# Or build manually
 cargo build --release
-# The binary will be available at target/release/zcd
+# Binary at target/release/zcd
 ```
 
 After installation, `zcd` will be available in your `$PATH` (usually `~/.cargo/bin/zcd`).
@@ -92,18 +92,14 @@ zcd clear
 
 ## Algorithm
 
-zcd uses an improved frecency algorithm that combines:
+zcd uses a **frecency** algorithm (zoxide model) combining visit frequency with recency:
 
-- **Frequency**: How often you visit a directory (logarithmic scaling)
-- **Recency**: How recently you visited a directory (logarithmic decay)
-- **Path Validation**: Automatically removes non-existent directories
+- **Rank**: +1 per visit, never saturates — the more you visit, the higher the rank
+- **Recency multiplier** at query time: ×4 (&lt; 1 hour), ×2 (&lt; 1 day), ×0.5 (&lt; 1 week), ×0.25 (older)
+- **Aging**: when total rank exceeds `max_age`, all entries decay ×0.9 and those below 1.0 are pruned
+- **Typo tolerance**: up to 25% of needle characters may go unmatched (skip-needle penalty); needles ≤ 3 characters stay strict
 
-The ranking score is calculated as:
-```
-score = (ln(visit_count) + 1) × recency_factor × 100
-```
-
-Where `recency_factor` decreases logarithmically as time passes since the last visit.
+Query results are ordered by fuzzy score (bucketed to 0.1), with frecency breaking ties.
 
 ## Configuration
 
@@ -114,23 +110,19 @@ zcd stores its configuration in `~/.config/zcd/config` and data in the configure
 - `exclude_dirs`: Directories to exclude from tracking
 - `debug`: Enable debug mode
 
-## Recent Changes (v1.2.0)
+## Recent Changes (v1.3.0)
 
-- ✅ **Improved Ranking Algorithm**: Now properly distinguishes high-frequency paths
-- ✅ **Path Validation**: Automatic cleanup of non-existent directories
-- ✅ **Enhanced Error Handling**: Graceful handling in zsh script
-- ✅ **Visit Count Tracking**: Better frequency analysis
-- ✅ **Code Quality**: Resolved all linting warnings
+- **Typo-tolerant matching**: transposed/mistyped characters in queries still find targets (skip-needle algorithm)
+- **Inlined fuzzy engine**: simplified to a single crate — no extra workspace dependency
+- **Optimized release profile**: fat LTO, single codegen unit, stripped symbols, panic=abort
+- **Previous (v1.2.0)**: Improved ranking, path validation, enhanced error handling
 
 ## Roadmap
 
-- [x] List entries with ranking
-- [x] Insert and delete entries  
-- [x] Zsh shell integration
-- [x] Fuzzy matching (fzy algorithm)
-- [x] Improved frecency algorithm
+- [x] Typo-tolerant fuzzy matching (skip-needle)
+- [x] Frevency algorithm (zoxide model)
 - [x] Path validation and cleanup
-- [x] Robust error handling
+- [x] Zsh shell integration
+- [x] z-compatible data import/export
 - [ ] Bash shell integration
-- [ ] Configuration management improvements
 - [ ] Performance optimizations
