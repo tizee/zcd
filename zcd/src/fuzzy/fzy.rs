@@ -7,7 +7,7 @@
 //! makes queries with transposed or mistyped characters (e.g. `labexample`
 //! for `lab/exmaple`) still find their target.
 
-use crate::score::*;
+use super::score::*;
 
 /// Number of needle characters allowed to go unmatched.
 ///

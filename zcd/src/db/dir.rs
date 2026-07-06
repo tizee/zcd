@@ -175,8 +175,8 @@ impl OpsDelegate for DirList<'_> {
         self.values()
             .filter(|dir| Path::new(dir.path.as_ref()).exists())
             .filter_map(|dir| {
-                let score = fuzzy::match_score(pattern, &dir.path);
-                (score > fuzzy::SCORE_MIN).then(|| {
+                let score = crate::fuzzy::match_score(pattern, &dir.path);
+                (score > crate::fuzzy::SCORE_MIN).then(|| {
                     let mut dir = dir.clone();
                     dir.rank = frecency(dir.rank, now, dir.last_accessed);
                     (score_bucket(score), dir)

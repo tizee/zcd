@@ -1,6 +1,7 @@
 mod cli;
 mod config;
-mod db;
+pub mod db;
+pub mod fuzzy;
 
 use clap::Parser;
 use cli::{AppExt, Cli};

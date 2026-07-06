@@ -1,5 +1,5 @@
 [workspace]
-members = ["fuzzy", "zcd"]
+members = ["zcd"]
 default-members = ["zcd"]
 resolver = "2"
 
