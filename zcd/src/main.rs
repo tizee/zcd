@@ -10,11 +10,14 @@ use std::process;
 
 fn main() {
     if !config_exists() {
-        generate_config_file();
+        if let Err(e) = generate_config_file() {
+            eprintln!("{:?}", e);
+            process::exit(1);
+        }
     }
     let app = Cli::parse();
     if let Err(e) = app.run() {
-        println!("{:?}", e);
+        eprintln!("{:?}", e);
         process::exit(1);
     }
 }

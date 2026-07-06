@@ -3,6 +3,7 @@ use crate::db::dir::{Dir, OpsDelegate};
 use crate::db::Database;
 
 use anyhow::{Context, Result};
+use std::path::Path;
 
 pub struct Client {
     db: Database<'static>,
@@ -25,18 +26,22 @@ impl Client {
         self.db.save()
     }
 
-    pub fn query(&self, pattern: &str) -> Result<Option<Dir>> {
-        let res = self.db.query(pattern);
-        if let Some(list) = res {
-            if !list.is_empty() {
-                return Ok(Some(list[0].clone()));
-            }
-        }
-        Ok(None)
+    pub fn query(&self, pattern: &str) -> Option<Dir<'_>> {
+        self.db.query(pattern).into_iter().next()
     }
 
-    pub fn list(&self) -> Result<Option<Vec<Dir>>> {
-        Ok(self.db.list())
+    pub fn list(&self) -> Vec<Dir<'_>> {
+        self.db.list()
+    }
+
+    pub fn import(&mut self, path: &Path) -> Result<usize> {
+        let count = self.db.import(path)?;
+        self.db.save()?;
+        Ok(count)
+    }
+
+    pub fn export(&self, path: &Path) -> Result<usize> {
+        self.db.export(path)
     }
 
     pub fn clear(&mut self) -> Result<()> {
@@ -51,6 +56,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
+
     // This test creates a temporary config file and data file,
     // then verifies that insert, query, and delete work as expected.
     #[test]
@@ -59,7 +65,6 @@ mod tests {
         let config_path: PathBuf = temp_dir.path().join("config");
         let datafile_path: PathBuf = temp_dir.path().join("zcddata");
 
-        // Write a simple config file with the datafile path set appropriately.
         let config_contents = format!(
             r#"max_age=5000
 datafile={}
@@ -77,13 +82,11 @@ debug=false "#,
         let entry_str = entry.to_str().unwrap();
         client.insert(entry_str).unwrap();
 
-        let query_result = client.query("test").unwrap();
+        let query_result = client.query("test");
         assert!(query_result.is_some());
         assert_eq!(query_result.unwrap().path, entry_str);
 
         client.delete(entry_str).unwrap();
-        let query_result = client.query("test").unwrap();
-        assert!(query_result.is_none());
+        assert!(client.query("test").is_none());
     }
-
 }

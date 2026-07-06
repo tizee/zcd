@@ -5,25 +5,21 @@ use anyhow::{Context, Result};
 use std::borrow::Cow;
 use std::path::Path;
 
-use data::{expand_path, open_file, write_file, DataFile, DataFileIO, ZDataFile, ZcdDataFile};
+use data::{expand_path, open_file, write_file};
 pub use dir::{Dir, DirList, OpsDelegate};
 
-use crate::config::{load_config_from_path, ConfigFile};
+use crate::config::{load_config_from_path, Config};
 
 pub struct Database<'a> {
     delegate: DirList<'a>,
-    pub dirty: bool,
-    pub config_file: ConfigFile,
+    dirty: bool,
+    config: Config,
 }
 
 impl OpsDelegate for Database<'_> {
-    fn update_frecent(&mut self) {
-        self.delegate.update_frecent();
-    }
-
     fn insert_or_update(&mut self, path: Cow<str>) {
         self.delegate.insert_or_update(path);
-        self.update_frecent();
+        self.delegate.age(self.config.max_age as f64);
         self.dirty = true;
     }
 
@@ -32,11 +28,11 @@ impl OpsDelegate for Database<'_> {
         self.dirty = true;
     }
 
-    fn query<S: AsRef<str>>(&self, pattern: S) -> Option<Vec<Dir>> {
+    fn query<S: AsRef<str>>(&self, pattern: S) -> Vec<Dir<'_>> {
         self.delegate.query(pattern)
     }
 
-    fn list(&self) -> Option<Vec<Dir>> {
+    fn list(&self) -> Vec<Dir<'_>> {
         self.delegate.list()
     }
 
@@ -45,88 +41,68 @@ impl OpsDelegate for Database<'_> {
     }
 }
 
-fn load_from_zcd_data_impl(p: &String) -> Result<DirList<'static>> {
+fn load_datafile(p: &str) -> Result<DirList<'static>> {
     let path = expand_path(p).context("failed to resolve datafile path")?;
     if !path.exists() {
-        Ok(DirList::new())
-    } else {
-        let file = open_file(path.as_path()).context("failed to read from z data")?;
-        let zcd_datafile = &DataFile::Zcd(ZcdDataFile {});
-        let dir_list = zcd_datafile
-            .from_bytes(file)
-            .context(format!("failed to load from z data file {}", p))?;
-        Ok(dir_list)
+        return Ok(DirList::new());
     }
-}
-
-#[allow(dead_code)]
-pub fn load_from_z_data_impl(p: &String) -> Result<DirList<'static>> {
-    let path = expand_path(p).context("failed to resolve datafile path")?;
-    if !path.exists() {
-        Ok(DirList::new())
-    } else {
-        let file = open_file(path.as_path()).context("failed to read from z data")?;
-        let z_datafile = &DataFile::Z(ZDataFile {});
-        let dir_list = z_datafile
-            .from_bytes(file)
-            .context(format!("failed to load from z data file {}", p))?;
-        Ok(dir_list)
-    }
+    let file = open_file(path.as_path()).context("failed to open datafile")?;
+    data::from_bytes(file).with_context(|| format!("failed to parse datafile {}", p))
 }
 
 impl Database<'_> {
     pub fn new(config_path: &Path) -> Result<Self> {
         let config = load_config_from_path(config_path).context("failed to load config")?;
-        let config_file = ConfigFile {
-            config,
-            config_path: config_path.display().to_string(),
-        };
-        let dir_list =
-            load_from_zcd_data_impl(&config_file.config.datafile).context("failed to load data")?;
+        let delegate = load_datafile(&config.datafile).context("failed to load data")?;
         Ok(Database {
-            config_file,
-            delegate: dir_list,
+            config,
+            delegate,
             dirty: false,
         })
     }
 
-    #[allow(dead_code)]
-    pub fn load_from_zcd(&mut self, p: &Path) -> Result<()> {
-        let dir_list =
-            load_from_zcd_data_impl(&p.display().to_string()).context("failed to load data")?;
-        self.delegate = dir_list;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn load_from_z(&mut self, p: &Path) -> Result<()> {
-        let dir_list =
-            load_from_z_data_impl(&p.display().to_string()).context("failed to load data")?;
-        self.delegate = dir_list;
-        Ok(())
-    }
-
     pub fn save(&self) -> Result<()> {
-        let zcd_datafile = &DataFile::Zcd(ZcdDataFile {});
-        // write only when modified
-        if self.dirty {
-            let bytes = zcd_datafile
-                .to_bytes(&self.delegate)
-                .context("failed to convert entries data")?;
-            let data_file = Path::new(&self.config_file.config.datafile);
-            write_file(data_file, bytes).context("failed to write datafile")?;
+        if !self.dirty {
             return Ok(());
         }
-        Ok(())
+        let bytes = data::to_bytes(&self.delegate);
+        write_file(Path::new(&self.config.datafile), bytes).context("failed to write datafile")
+    }
+
+    /// Merge entries from another z-compatible datafile. Existing entries
+    /// keep the higher rank and the most recent access time.
+    pub fn import(&mut self, path: &Path) -> Result<usize> {
+        let incoming = load_datafile(&path.display().to_string())
+            .with_context(|| format!("failed to import from {}", path.display()))?;
+        let count = incoming.len();
+        for (key, dir) in incoming.iter() {
+            match self.delegate.get_mut(key) {
+                Some(existing) => {
+                    existing.rank = existing.rank.max(dir.rank);
+                    existing.last_accessed = existing.last_accessed.max(dir.last_accessed);
+                }
+                None => {
+                    self.delegate.insert(key.clone(), dir.clone());
+                }
+            }
+        }
+        self.dirty = true;
+        Ok(count)
+    }
+
+    /// Write all entries to `path` in the z-compatible pipe format.
+    pub fn export(&self, path: &Path) -> Result<usize> {
+        let bytes = data::to_bytes(&self.delegate);
+        write_file(path, bytes)
+            .with_context(|| format!("failed to export to {}", path.display()))?;
+        Ok(self.delegate.len())
     }
 
     pub fn clear(&mut self) -> Result<()> {
-        // Clear the in-memory database (DirList is a wrapper around HashMap)
         self.delegate.clear_data();
         self.dirty = true;
 
-        // Remove the datafile if it exists.
-        let datafile = std::path::Path::new(&self.config_file.config.datafile);
+        let datafile = Path::new(&self.config.datafile);
         if datafile.exists() {
             std::fs::remove_file(datafile)
                 .with_context(|| format!("failed to remove datafile: {}", datafile.display()))?;
@@ -141,74 +117,80 @@ mod test_db {
     use std::fs;
     use tempfile::tempdir;
 
-    #[test]
-    fn test_clear_database() {
-        // Create a temporary directory for config and data.
-        let temp_dir = tempdir().unwrap();
-        let config_path = temp_dir.path().join("config");
-        let datafile_path = temp_dir.path().join("zcddata");
-
-        // Create a config file with our test datafile path.
-        let config_contents = format!(
+    fn write_config(dir: &Path, datafile: &Path) -> std::path::PathBuf {
+        let config_path = dir.join("config");
+        let contents = format!(
             "max_age=5000\ndatafile={}\nexclude_dirs=[]\ndebug=false",
-            datafile_path.to_string_lossy()
+            datafile.to_string_lossy()
         );
-        fs::write(&config_path, config_contents).unwrap();
-
-        // Write valid content to the data file (empty but valid format).
-        let valid_data = "/dummy/path|1.0|1626969287\n"; // Example of valid entry: path|rank|timestamp
-        fs::write(&datafile_path, valid_data).unwrap();
-
-        // Ensure the datafile exists.
-        assert!(datafile_path.exists(), "Datafile should exist before clear");
-
-        // Initialize the Database.
-        let mut db = Database::new(&config_path).unwrap();
-        // Insert a dummy entry to ensure the in-memory database is not empty.
-        db.insert_or_update("dummy".into());
-
-        // Invoke clear.
-        db.clear().unwrap();
-
-        // Check that the in-memory database is empty.
-        assert_eq!(
-            db.delegate.len(),
-            0,
-            "Database delegate should be empty after clear"
-        );
-        // Check that the datafile has been removed.
-        assert!(
-            !datafile_path.exists(),
-            "Datafile should be removed after clear"
-        );
+        fs::write(&config_path, contents).unwrap();
+        config_path
     }
 
     #[test]
-    fn test_clear_without_existing_datafile() {
-        // Create a temporary directory with a config file but no datafile.
+    fn clear_empties_database_and_removes_datafile() {
         let temp_dir = tempdir().unwrap();
-        let config_path = temp_dir.path().join("config");
         let datafile_path = temp_dir.path().join("zcddata");
-
-        let config_contents = format!(
-            "max_age=5000\ndatafile={}\nexclude_dirs=[]\ndebug=false",
-            datafile_path.to_string_lossy()
-        );
-        fs::write(&config_path, config_contents).unwrap();
-
-        // Ensure the datafile does not exist.
-        if datafile_path.exists() {
-            fs::remove_file(&datafile_path).unwrap();
-        }
-        assert!(!datafile_path.exists());
+        let config_path = write_config(temp_dir.path(), &datafile_path);
+        fs::write(&datafile_path, "/dummy/path|1.0|1626969287\n").unwrap();
 
         let mut db = Database::new(&config_path).unwrap();
-        // Insert a dummy entry.
         db.insert_or_update("dummy".into());
-
-        // Call clear; it should succeed even if the file is missing.
         db.clear().unwrap();
-        // In-memory database should be empty.
-        assert_eq!(db.delegate.len(), 0);
+
+        assert!(db.list().is_empty());
+        assert!(!datafile_path.exists());
+    }
+
+    #[test]
+    fn clear_succeeds_without_existing_datafile() {
+        let temp_dir = tempdir().unwrap();
+        let datafile_path = temp_dir.path().join("zcddata");
+        let config_path = write_config(temp_dir.path(), &datafile_path);
+
+        let mut db = Database::new(&config_path).unwrap();
+        db.insert_or_update("dummy".into());
+        db.clear().unwrap();
+        assert!(db.list().is_empty());
+    }
+
+    #[test]
+    fn export_then_import_roundtrips() {
+        let temp_dir = tempdir().unwrap();
+        let datafile_path = temp_dir.path().join("zcddata");
+        let config_path = write_config(temp_dir.path(), &datafile_path);
+        let export_path = temp_dir.path().join("exported");
+
+        let mut db = Database::new(&config_path).unwrap();
+        db.insert_or_update(temp_dir.path().to_string_lossy().into_owned().into());
+        assert_eq!(db.export(&export_path).unwrap(), 1);
+
+        let mut db2 = Database::new(&config_path).unwrap();
+        db2.clear_data();
+        assert_eq!(db2.import(&export_path).unwrap(), 1);
+        assert_eq!(db2.list().len(), 1);
+    }
+
+    #[test]
+    fn import_merges_keeping_higher_rank_and_newer_access() {
+        let temp_dir = tempdir().unwrap();
+        let datafile_path = temp_dir.path().join("zcddata");
+        let config_path = write_config(temp_dir.path(), &datafile_path);
+        fs::write(&datafile_path, "/shared|10.0|200\n/mine|5.0|100\n").unwrap();
+
+        let other = temp_dir.path().join("other-tool-data");
+        fs::write(&other, "/shared|3.0|900\n/theirs|7.0|300\n").unwrap();
+
+        let mut db = Database::new(&config_path).unwrap();
+        db.import(&other).unwrap();
+        db.save().unwrap();
+
+        let text = fs::read_to_string(&datafile_path).unwrap();
+        assert!(
+            text.contains("/shared|10.0|900"),
+            "merge should keep max rank and newest epoch, got:\n{text}"
+        );
+        assert!(text.contains("/mine|5.0|100"));
+        assert!(text.contains("/theirs|7.0|300"));
     }
 }

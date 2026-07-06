@@ -15,16 +15,10 @@ pub fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-pub struct ConfigFile {
-    pub config: Config,
-    #[allow(dead_code)]
-    pub config_path: String,
-}
-
 #[derive(Debug)]
 pub struct Config {
-    /// lifetime in millisecond
-    #[allow(dead_code)]
+    /// Rank aging threshold: when the sum of all ranks exceeds this value,
+    /// every rank is decayed so the database stays bounded.
     pub max_age: u64,
     /// debug mode
     #[allow(dead_code)]
@@ -106,54 +100,44 @@ pub fn config_file() -> Option<PathBuf> {
     )
 }
 
-pub fn generate_config_file() {
-    let config_file = config_file().unwrap();
+pub fn generate_config_file() -> Result<()> {
+    let config_file = config_file().context("cannot resolve config file path")?;
     if config_file.exists() {
         println!(
             "The zcd config file already exists at: {}",
             config_file.to_string_lossy()
         );
         print!("Overwrite? (y/N): ");
-        match io::stdout().flush() {
-            Ok(_) => {}
-            Err(error) => println!("{:?}", error),
-        };
+        io::stdout().flush().context("failed to flush stdout")?;
         let mut answer = String::new();
-        match io::stdin().read_line(&mut answer) {
-            Ok(_) => {}
-            Err(error) => println!("{:?}", error),
-        };
+        io::stdin()
+            .read_line(&mut answer)
+            .context("failed to read answer")?;
         if !answer.trim().eq_ignore_ascii_case("Y") {
-            return;
+            return Ok(());
         }
-    } else {
-        let config_dir = config_file.parent();
-        if let Some(path) = config_dir { 
-            match fs::create_dir_all(path) {
-                Ok(_) => {}
-                Err(error) => println!("{:?}", error),
-            }
-        }
+    } else if let Some(parent) = config_file.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create config dir {}", parent.display()))?;
     }
 
-    let default_config = r#"#This is zcd's configuration file. You could define your zcd config here instead of putting it in your shell config files like bashrc etc.
-# Specify how long the entry persists in seconds.
+    let default_config = r#"# This is zcd's configuration file.
+# Rank aging threshold: when the sum of all ranks exceeds this value,
+# ranks are decayed (multiplied by 0.9) and negligible entries dropped.
 max_age=5000
-# Datafile
+# Datafile (z-compatible plain text: path|rank|last_accessed)
 datafile=~/.zcddata
 # Exclude dirs
 # eg. exclude_dirs=~/tmp,
 exclude_dirs=[]
 "#;
-    match fs::write(&config_file, default_config) {
-        Ok(_) => {
-            println!(
-                "Succesfully write zcd config file to {}",
-                config_file.to_string_lossy()
-            )
-        }
-        Err(error) => println!("{:?}", error),
-    };
+    fs::write(&config_file, default_config)
+        .with_context(|| format!("failed to write config to {}", config_file.display()))?;
+    println!(
+        "Successfully wrote zcd config file to {}",
+        config_file.to_string_lossy()
+    );
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -269,14 +253,15 @@ fn parse_config(args: Vec<String>) -> Result<Config> {
 fn read_config<R: Read>(config: R) -> Result<Config> {
     let reader = BufReader::new(config);
     let mut args = vec![];
-    reader.lines().for_each(|line| {
-        let line = String::from(line.unwrap().trim());
-        // omit lines start with # or empty lines
-        if line.is_empty() || line.as_bytes()[0] == b'#' {
-            return;
+    for line in reader.lines() {
+        let line = line.context("failed to read config line")?;
+        let line = line.trim();
+        // omit comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
-        args.push(line);
-    });
+        args.push(line.to_string());
+    }
     parse_config(args)
 }
 

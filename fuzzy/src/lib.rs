@@ -1,14 +1,10 @@
+//! Typo-tolerant fuzzy matching for path-like strings.
+//!
+//! Extends the fzy scoring algorithm with a bounded skip-needle tolerance.
+//! See [`match_score`] for the entry point.
+
 mod fzy;
-mod matcher;
 mod score;
 
-pub use matcher::Matcher;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
+pub use fzy::{has_match, match_score};
+pub use score::{SCORE_MAX, SCORE_MIN};

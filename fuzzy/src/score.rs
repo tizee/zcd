@@ -1,65 +1,60 @@
-#[derive(Debug, Eq, PartialEq, Clone, Hash)]
-#[allow(dead_code)]
-pub enum FzyMatchType {
-    Leading,
-    Trailing,
-    Inner,
-    Consecutive,
-    Slash,
-    Word,
-    Captial,
-    Dot,
-}
+/// Score sentinels. Infinities keep arithmetic sane (`-inf + gap == -inf`)
+/// and match upstream fzy, which uses -INFINITY/INFINITY.
+pub const SCORE_MIN: f64 = f64::NEG_INFINITY;
+pub const SCORE_MAX: f64 = f64::INFINITY;
 
-pub const FZY_SCORE_GAP_LEADING: f64 = -0.005;
-pub const FZY_SCORE_GAP_TRAILING: f64 = -0.005;
-pub const FZY_SCORE_GAP_INNER: f64 = -0.01;
-pub const FZY_SCORE_MATCH_CONSECUTIVE: f64 = 1.0;
-pub const FZY_SCORE_MATCH_SLASH: f64 = 0.9;
-pub const FZY_SCORE_MATCH_WORD: f64 = 0.8;
-pub const FZY_SCORE_MATCH_CAPITAL: f64 = 0.7;
-pub const FZY_SCORE_MATCH_DOT: f64 = 0.6;
-pub const SCORE_MIN: f64 = f64::MIN;
-pub const SCORE_MAX: f64 = f64::MAX;
+pub const SCORE_GAP_LEADING: f64 = -0.005;
+pub const SCORE_GAP_TRAILING: f64 = -0.005;
+pub const SCORE_GAP_INNER: f64 = -0.01;
+pub const SCORE_MATCH_CONSECUTIVE: f64 = 1.0;
+pub const SCORE_MATCH_SLASH: f64 = 0.9;
+pub const SCORE_MATCH_WORD: f64 = 0.8;
+pub const SCORE_MATCH_CAPITAL: f64 = 0.7;
+pub const SCORE_MATCH_DOT: f64 = 0.6;
+/// Penalty for a needle character with no counterpart in the haystack.
+/// Must be costlier than any single-character match bonus so that
+/// skipping is always a last resort.
+pub const SCORE_SKIP_NEEDLE: f64 = -1.0;
 
-#[derive(Debug, Clone)]
-pub enum FzyCharType {
+#[derive(Debug, Clone, Copy)]
+pub enum CharType {
     Upper,
-    // ascii lower case and other Unicode characters
+    /// ASCII lowercase and any other Unicode character.
     Lower,
     Digit,
     Slash,
     Dot,
-    // other seperator like -,_,/ etc
+    /// Other separators: space, `-`, `_`.
     Sep,
 }
 
-impl FzyCharType {
-    pub fn get_type(ch: char) -> FzyCharType {
+impl CharType {
+    pub fn of(ch: char) -> CharType {
         match ch {
-            '0'..='9' => FzyCharType::Digit,
-            'A'..='Z' => FzyCharType::Upper,
-            ' ' | '-' | '_' => FzyCharType::Sep,
-            '.' => FzyCharType::Dot,
-            '/' => FzyCharType::Slash,
-            'a'..='z' => FzyCharType::Lower,
-            _ => FzyCharType::Lower,
+            '0'..='9' => CharType::Digit,
+            'A'..='Z' => CharType::Upper,
+            ' ' | '-' | '_' => CharType::Sep,
+            '.' => CharType::Dot,
+            '/' => CharType::Slash,
+            _ => CharType::Lower,
         }
     }
 
-    pub fn get_bonus(&self, last_ch: FzyCharType) -> f64 {
+    /// Bonus awarded for matching a character of this type when the
+    /// previous haystack character is `prev`.
+    pub fn bonus(self, prev: CharType) -> f64 {
         match self {
-            FzyCharType::Upper => match last_ch {
-                FzyCharType::Lower => FZY_SCORE_MATCH_CAPITAL,
-                FzyCharType::Dot => FZY_SCORE_MATCH_DOT,
-                FzyCharType::Sep => FZY_SCORE_MATCH_WORD,
-                FzyCharType::Slash => FZY_SCORE_MATCH_SLASH,
+            CharType::Upper => match prev {
+                CharType::Lower => SCORE_MATCH_CAPITAL,
+                CharType::Dot => SCORE_MATCH_DOT,
+                CharType::Sep => SCORE_MATCH_WORD,
+                CharType::Slash => SCORE_MATCH_SLASH,
                 _ => 0.0,
             },
-            FzyCharType::Lower | FzyCharType::Digit => match last_ch {
-                FzyCharType::Sep => FZY_SCORE_MATCH_WORD,
-                FzyCharType::Slash => FZY_SCORE_MATCH_SLASH,
-                FzyCharType::Dot => FZY_SCORE_MATCH_DOT,
+            CharType::Lower | CharType::Digit => match prev {
+                CharType::Sep => SCORE_MATCH_WORD,
+                CharType::Slash => SCORE_MATCH_SLASH,
+                CharType::Dot => SCORE_MATCH_DOT,
                 _ => 0.0,
             },
             _ => 0.0,

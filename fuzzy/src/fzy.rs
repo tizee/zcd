@@ -1,104 +1,141 @@
-use crate::{
-    matcher::{MatchScore},
-    score::*,
-};
+//! Typo-tolerant fuzzy scoring.
+//!
+//! The core is the fzy dynamic-programming scorer (ported from
+//! <https://github.com/jhawthorn/fzy>) extended with a *skip-needle*
+//! transition: a needle character that has no counterpart in the haystack
+//! costs [`SCORE_SKIP_NEEDLE`] instead of failing the whole match. This
+//! makes queries with transposed or mistyped characters (e.g. `labexample`
+//! for `lab/exmaple`) still find their target.
 
-pub struct FzyMatcher {
-    pub needle_len: usize,
-    pub haystack_len: usize,
-    pub lower_needle: Vec<char>,
-    pub lower_haystack: Vec<char>,
-    pub match_bonus: Vec<f64>,
-}
+use crate::score::*;
 
-impl FzyMatcher {
-    /// Constructs a new FzyMatcher with Unicode‑aware lowercasing.
-    pub(crate) fn new<S: AsRef<str>>(needle: S, haystack: S) -> Self {
-        let lower_needle: Vec<char> = needle.as_ref().to_lowercase().chars().collect();
-        let lower_haystack: Vec<char> = haystack.as_ref().to_lowercase().chars().collect();
-        let needle_len = lower_needle.len();
-        let haystack_len = lower_haystack.len();
-        // Precompute bonus scores as per fzy's algorithm, based solely on the immediate predecessor.
-        let match_bonus = compute_match_bonus(&lower_haystack);
-        Self {
-            needle_len,
-            haystack_len,
-            lower_needle,
-            lower_haystack,
-            match_bonus,
-        }
-    }
-
-    /// Computes the final DP score using two rolling rows.
-    /// This method encapsulates the fuzzy matching logic.
-    fn compute_score(&self) -> f64 {
-        let n = self.needle_len;
-        let m = self.haystack_len;
-        let mut dp_match = [vec![SCORE_MIN; m], vec![SCORE_MIN; m]]; // Best score ending with a match.
-        let mut dp_score = [vec![SCORE_MIN; m], vec![SCORE_MIN; m]]; // Overall best score.
-
-        for i in 0..n {
-            let gap_score = if i == n - 1 { FZY_SCORE_GAP_TRAILING } else { FZY_SCORE_GAP_INNER };
-            let mut prev_score = SCORE_MIN;
-            for j in 0..m {
-                if self.lower_needle[i] == self.lower_haystack[j] {
-                    let score = if i == 0 {
-                        // For the first needle character, add the leading gap penalty.
-                        (j as f64) * FZY_SCORE_GAP_LEADING + self.match_bonus[j]
-                    } else if j > 0 {
-                        // For subsequent characters, choose the best between starting a new match or continuing.
-                        (dp_score[(i - 1) % 2][j - 1] + self.match_bonus[j])
-                            .max(dp_match[(i - 1) % 2][j - 1] + FZY_SCORE_MATCH_CONSECUTIVE)
-                    } else {
-                        SCORE_MIN
-                    };
-                    dp_match[i % 2][j] = score;
-                    prev_score = score.max(prev_score + gap_score);
-                    dp_score[i % 2][j] = prev_score;
-                } else {
-                    dp_match[i % 2][j] = SCORE_MIN;
-                    prev_score += gap_score;
-                    dp_score[i % 2][j] = prev_score;
-                }
-            }
-            if i < n - 1 {
-                dp_match[(i + 1) % 2].iter_mut().for_each(|v| *v = SCORE_MIN);
-                dp_score[(i + 1) % 2].iter_mut().for_each(|v| *v = SCORE_MIN);
-            }
-        }
-        dp_score[(n - 1) % 2][m - 1]
+/// Number of needle characters allowed to go unmatched.
+///
+/// Short needles stay strict: with 3 or fewer characters, dropping even one
+/// makes almost everything match. Longer needles tolerate 25% misses.
+fn allowed_skips(needle_len: usize) -> usize {
+    if needle_len <= 3 {
+        0
+    } else {
+        needle_len / 4
     }
 }
 
-impl MatchScore for FzyMatcher {
-    fn match_score(needle: &str, haystack: &str) -> f64 {
-        if needle.is_empty() {
-            return SCORE_MAX;
+/// Length of the longest common subsequence between needle and haystack.
+/// Used as the match gate: enough needle characters must appear in order.
+fn lcs_len(needle: &[char], haystack: &[char]) -> usize {
+    let m = haystack.len();
+    let mut row = vec![0usize; m + 1];
+    for &nc in needle {
+        let mut prev_diag = 0; // row[j-1] from the previous row
+        for j in 1..=m {
+            let prev_row_j = row[j];
+            row[j] = if nc == haystack[j - 1] {
+                prev_diag + 1
+            } else {
+                row[j].max(row[j - 1])
+            };
+            prev_diag = prev_row_j;
         }
-        let matcher = Self::new(needle, haystack);
-        if matcher.needle_len > matcher.haystack_len {
-            return SCORE_MIN;
-        }
-        // Handle exact match directly to avoid unnecessary DP processing
-        if needle.to_lowercase() == haystack.to_lowercase() {
-            return SCORE_MAX;
-        }
-        matcher.compute_score()
     }
+    row[m]
 }
 
-/// Precompute bonus scores for each character in the haystack based on its immediate predecessor.
-/// This follows the original approach in fzy's algorithm.
+/// Precompute the positional bonus for every haystack character based on
+/// its immediate predecessor (directory separator at the start).
 fn compute_match_bonus(haystack: &[char]) -> Vec<f64> {
     let mut bonuses = Vec::with_capacity(haystack.len());
-    let mut last_ch = FzyCharType::get_type('/'); // Start with the directory separator.
-    for &ch in haystack.iter() {
-        let cur = FzyCharType::get_type(ch);
-        let bonus = cur.get_bonus(last_ch);
-        bonuses.push(bonus);
-        last_ch = cur;
+    let mut prev = CharType::of('/');
+    for &ch in haystack {
+        let cur = CharType::of(ch);
+        bonuses.push(cur.bonus(prev));
+        prev = cur;
     }
     bonuses
+}
+
+/// Returns true when `needle` matches `haystack` within the skip tolerance.
+pub fn has_match(needle: &str, haystack: &str) -> bool {
+    let needle: Vec<char> = needle.to_lowercase().chars().collect();
+    let haystack: Vec<char> = haystack.to_lowercase().chars().collect();
+    matches_within_tolerance(&needle, &haystack)
+}
+
+fn matches_within_tolerance(needle: &[char], haystack: &[char]) -> bool {
+    let required = needle.len() - allowed_skips(needle.len());
+    haystack.len() >= required && lcs_len(needle, haystack) >= required
+}
+
+/// Score `needle` against `haystack`.
+///
+/// Returns [`SCORE_MAX`] for an exact (case-insensitive) match,
+/// [`SCORE_MIN`] when too few needle characters appear in order,
+/// and a finite score otherwise (higher is better).
+pub fn match_score(needle: &str, haystack: &str) -> f64 {
+    if needle.is_empty() {
+        return SCORE_MAX;
+    }
+    let needle: Vec<char> = needle.to_lowercase().chars().collect();
+    let haystack: Vec<char> = haystack.to_lowercase().chars().collect();
+    if !matches_within_tolerance(&needle, &haystack) {
+        return SCORE_MIN;
+    }
+    if needle == haystack {
+        return SCORE_MAX;
+    }
+    compute_score(&needle, &haystack)
+}
+
+/// Dynamic program over (needle prefix, haystack prefix).
+///
+/// `best[i][j]` is the best score using the first `i` needle chars against
+/// the first `j` haystack chars; `matched[i][j]` additionally requires
+/// needle char `i` to match haystack char `j`. Transitions:
+///
+/// - match: `best[i-1][j-1] + bonus` or `matched[i-1][j-1] + consecutive`
+/// - gap:   `best[i][j-1] + gap` (trailing gap once all needle chars used)
+/// - skip:  `best[i-1][j] + SCORE_SKIP_NEEDLE` (the tolerance extension)
+fn compute_score(needle: &[char], haystack: &[char]) -> f64 {
+    let n = needle.len();
+    let m = haystack.len();
+    let match_bonus = compute_match_bonus(haystack);
+
+    // Rolling rows over the needle dimension.
+    let mut best_prev = vec![0.0f64; m + 1];
+    let mut matched_prev = vec![SCORE_MIN; m + 1];
+    // Row 0: no needle chars consumed; gaps before the first match are
+    // charged at the leading rate, as in fzy.
+    for (j, cell) in best_prev.iter_mut().enumerate().skip(1) {
+        *cell = j as f64 * SCORE_GAP_LEADING;
+    }
+
+    let mut best_cur = vec![0.0f64; m + 1];
+    let mut matched_cur = vec![SCORE_MIN; m + 1];
+
+    for i in 1..=n {
+        let gap = if i == n {
+            SCORE_GAP_TRAILING
+        } else {
+            SCORE_GAP_INNER
+        };
+        best_cur[0] = best_prev[0] + SCORE_SKIP_NEEDLE;
+        matched_cur[0] = SCORE_MIN;
+        for j in 1..=m {
+            matched_cur[j] = if needle[i - 1] == haystack[j - 1] {
+                let start = best_prev[j - 1] + match_bonus[j - 1];
+                let extend = matched_prev[j - 1] + SCORE_MATCH_CONSECUTIVE;
+                start.max(extend)
+            } else {
+                SCORE_MIN
+            };
+            best_cur[j] = matched_cur[j]
+                .max(best_cur[j - 1] + gap)
+                .max(best_prev[j] + SCORE_SKIP_NEEDLE);
+        }
+        std::mem::swap(&mut best_prev, &mut best_cur);
+        std::mem::swap(&mut matched_prev, &mut matched_cur);
+    }
+    best_prev[m]
 }
 
 #[cfg(test)]
@@ -106,68 +143,125 @@ mod test_fzy {
     use super::*;
 
     #[test]
-    fn test_empty_needle() {
-        let score = FzyMatcher::match_score("", "/a/b/c");
-        assert_eq!(score, SCORE_MAX);
+    fn empty_needle_matches_everything() {
+        assert_eq!(match_score("", "/a/b/c"), SCORE_MAX);
     }
 
     #[test]
-    fn test_needle_longer_than_haystack() {
-        let score = FzyMatcher::match_score("abcdef", "abc");
-        assert_eq!(score, SCORE_MIN);
+    fn exact_match_scores_max() {
+        assert_eq!(match_score("test", "test"), SCORE_MAX);
     }
 
     #[test]
-    fn test_exact_match() {
-        let score = FzyMatcher::match_score("test", "test");
-        assert_eq!(score, SCORE_MAX);
+    fn case_insensitive_unicode_exact_match() {
+        assert_eq!(match_score("über", "ÜBER"), SCORE_MAX);
     }
 
     #[test]
-    fn test_non_match() {
-        let score = FzyMatcher::match_score("xyz", "abc");
-        assert_eq!(score, SCORE_MIN);
+    fn disjoint_strings_do_not_match() {
+        assert_eq!(match_score("xyz", "abc"), SCORE_MIN);
     }
 
     #[test]
-    fn test_prefer_consecutive() {
-        let score1 = FzyMatcher::match_score("file", "file");
-        let score2 = FzyMatcher::match_score("file", "filter");
-        assert!(score1 > score2, "Consecutive match should score higher");
+    fn empty_haystack_does_not_match() {
+        assert_eq!(match_score("test", ""), SCORE_MIN);
     }
 
     #[test]
-    fn test_prefer_beginning_of_words() {
-        let score1 = FzyMatcher::match_score("amor", "app/models/order");
-        let score2 = FzyMatcher::match_score("amor", "app/models/zrder");
-        assert!(score1 > score2, "Match at beginning of word should score higher");
+    fn needle_much_longer_than_haystack_does_not_match() {
+        assert_eq!(match_score("abcdef", "abc"), SCORE_MIN);
     }
 
     #[test]
-    fn test_prefer_shorter_candidates() {
-        let score1 = FzyMatcher::match_score("test", "tests");
-        let score2 = FzyMatcher::match_score("test", "testing");
-        assert!(score1 > score2, "Shorter candidate should score higher");
+    fn short_needles_stay_strict() {
+        // 3 chars or fewer: no skip allowance, otherwise everything matches.
+        assert_eq!(match_score("ass", "tags"), SCORE_MIN);
+        assert_eq!(match_score("abc", "acb"), SCORE_MIN);
     }
 
     #[test]
-    fn test_empty_haystack() {
-        let score = FzyMatcher::match_score("test", "");
-        assert_eq!(score, SCORE_MIN);
+    fn transposed_characters_still_match() {
+        // The motivating regression: the user types the intended spelling
+        // ("example") but the directory name carries a transposition
+        // ("exmaple"), so a strict in-order subsequence never matches.
+        let score = match_score("labexample", "/home/user/projects/lab/exmaple");
+        assert!(
+            score > SCORE_MIN,
+            "typo-tolerant matcher should accept a single transposition, got {score}"
+        );
     }
 
     #[test]
-    fn test_unicode_match() {
-        // Ensure fuzzy matching works correctly with Chinese characters.
-        let score = FzyMatcher::match_score("路径", "/用户/路径/文档");
+    fn correct_spelling_beats_typo() {
+        let haystack = "/home/user/projects/lab/exmaple";
+        let exact = match_score("labexmaple", haystack);
+        let typo = match_score("labexample", haystack);
+        assert!(
+            exact > typo,
+            "exact subsequence {exact} should outrank typo {typo}"
+        );
+    }
+
+    #[test]
+    fn typo_still_prefers_intended_target_over_unrelated_dirs() {
+        let target = "/home/user/projects/lab/exmaple";
+        let other = "/home/user/packages/zcd-tool";
+        let target_score = match_score("labexample", target);
+        let other_score = match_score("labexample", other);
+        assert!(
+            target_score > other_score,
+            "target {target_score} should outrank unrelated {other_score}"
+        );
+    }
+
+    #[test]
+    fn too_many_typos_do_not_match() {
+        // 8 chars, allowance 2, but 4 chars miss.
+        assert_eq!(match_score("abcdwxyz", "abcd"), SCORE_MIN);
+    }
+
+    #[test]
+    fn prefers_consecutive_matches() {
+        assert!(match_score("file", "file") > match_score("file", "filter"));
+    }
+
+    #[test]
+    fn prefers_beginning_of_words() {
+        let word_start = match_score("amor", "app/models/order");
+        let mid_word = match_score("amor", "app/models/zrder");
+        assert!(word_start > mid_word);
+    }
+
+    #[test]
+    fn prefers_shorter_candidates() {
+        assert!(match_score("test", "tests") > match_score("test", "testing"));
+    }
+
+    #[test]
+    fn unicode_subsequence_matches() {
+        assert!(match_score("路径", "/用户/路径/文档") > SCORE_MIN);
+    }
+
+    #[test]
+    fn ordinary_subsequence_scores_positive() {
+        // A sane subsequence match in a long path must not be filtered out
+        // by score-sign checks (regression for the old `> 0.0` filter).
+        let score = match_score("zcd", "/home/user/projects/terminal/packages/zcd");
         assert!(score > SCORE_MIN);
     }
 
     #[test]
-    fn test_case_insensitive_unicode() {
-        // Verify that case-insensitive matching works with Unicode accented characters.
-        let score = FzyMatcher::match_score("über", "ÜBER");
-        assert_eq!(score, SCORE_MAX);
+    fn lcs_len_basics() {
+        let a: Vec<char> = "labexample".chars().collect();
+        let b: Vec<char> = "lab/exmaple".chars().collect();
+        assert_eq!(lcs_len(&a, &b), 9); // only one of 10 chars misses
+    }
+
+    #[test]
+    fn allowed_skips_thresholds() {
+        assert_eq!(allowed_skips(1), 0);
+        assert_eq!(allowed_skips(3), 0);
+        assert_eq!(allowed_skips(4), 1);
+        assert_eq!(allowed_skips(11), 2);
     }
 }
-
